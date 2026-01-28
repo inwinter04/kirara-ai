@@ -54,6 +54,22 @@ class HuluxiaConfig(BaseModel):
         le=300,
     )
 
+    # ===== 消息发送配置 =====
+    comment_delay_ms: int = Field(
+        title="评论发送延迟（毫秒）",
+        description="两次评论之间的最小时间间隔，建议 500ms",
+        default=500,
+        ge=0,
+        le=10000,
+    )
+
+    sensitive_words: List[str] = Field(
+        title="敏感词列表",
+        description="需要过滤的敏感词，每个词会被空格分隔",
+        default=["测试", "演示", "示例", "test", "demo", "example"],
+        json_schema_extra={"widget": "textarea"},
+    )
+
     def __init__(self, **data):
         device_code_from_data = data.pop("device_code", None)
         super().__init__(**data)
@@ -211,3 +227,58 @@ class HuluxiaAdapterState(Base):
 
     def __repr__(self):
         return f"<HuluxiaAdapterState adapter_name={self.adapter_name}, user_id={self.user_id}>"
+
+
+class HuluxiaMessageUser(BaseModel):
+    """葫芦侠消息中的用户信息"""
+
+    model_config = ConfigDict(extra="allow")
+
+    userID: int = Field(description="用户ID", alias="userID")
+    nick: str = Field(description="用户昵称")
+    avatar: str = Field(description="用户头像URL")
+    gender: int = Field(description="性别")
+    age: int = Field(description="年龄")
+    role: int = Field(description="用户角色")
+    experience: int = Field(description="经验值")
+    credits: int = Field(description="用户拥有的葫芦（葫芦侠内的货币）")
+    level: int = Field(description="用户等级")
+    integral: int = Field(description="用户经验（用于区分等级）")
+
+
+class HuluxiaMessageContent(BaseModel):
+    """葫芦侠消息内容"""
+
+    model_config = ConfigDict(extra="allow")
+
+    commentID: int = Field(description="评论ID")
+    createTime: int = Field(description="消息创建时间戳（毫秒）")
+    text: str = Field(description="消息文本内容")
+    images: list = Field(description="图片列表")
+    voice: str = Field(description="语音")
+    voiceTime: int = Field(description="语音时长")
+    score: int = Field(description="其他用户在消息内赠送的葫芦数量")
+    scoreTxt: str = Field(description="赠送葫芦的留言")
+    seq: int = Field(description="序号")
+    state: int = Field(description="状态")
+    isTop: int = Field(description="是否置顶")
+    user: HuluxiaMessageUser = Field(description="发送用户的信息")
+
+
+class HuluxiaMessageItem(BaseModel):
+    """葫芦侠消息项"""
+
+    model_config = ConfigDict(extra="allow")
+
+    contentType: int = Field(description="内容类型")
+    content: HuluxiaMessageContent = Field(description="消息内容")
+
+
+class HuluxiaMessageListResponse(BaseModel):
+    """葫芦侠消息列表响应"""
+
+    model_config = ConfigDict(extra="allow")
+
+    status: int = Field(description="响应状态，1表示成功")
+    msg: str = Field(description="响应消息，成功时为空")
+    datas: List[HuluxiaMessageItem] = Field(description="消息列表数组")

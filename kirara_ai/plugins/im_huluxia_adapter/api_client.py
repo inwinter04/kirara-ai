@@ -89,6 +89,14 @@ class HuluxiaApiClient:
         # 返回MD5加密后的签名
         return hashlib.md5(sign_string.encode("utf-8")).hexdigest()
 
+    async def _safe_json_parse(self, response, response_text: str) -> Dict[str, Any]:
+        """安全解析JSON响应"""
+        try:
+            return await response.json()
+        except Exception as e:
+            logger.error(f"JSON解析错误: {e}, 响应内容: {response_text}")
+            raise Exception(f"JSON解析错误: {e}")
+
     async def login(
         self, account: str, password: str, login_main_site: bool = True
     ) -> Dict[str, Any]:
@@ -149,12 +157,7 @@ class HuluxiaApiClient:
 
             async with self.session.post(url, data=data, headers=headers) as response:
                 response_text = await response.text()
-
-                try:
-                    response_data = await response.json()
-                except Exception as e:
-                    logger.error(f"JSON解析错误: {e}, 响应内容: {response_text}")
-                    raise Exception(f"JSON解析错误: {e}")
+                response_data = await self._safe_json_parse(response, response_text)
 
                 # 7. 提取用户信息
                 if "user" in response_data and "_key" in response_data:
@@ -232,3 +235,167 @@ class HuluxiaApiClient:
         except Exception as e:
             logger.error(f"验证登录状态失败: {e}")
             return False
+
+    async def get_message_list(
+        self, _key: str, market_id: str, start: int = 0, count: int = 20
+    ) -> Dict[str, Any]:
+        """
+        获取最新消息列表
+
+        Args:
+            _key: 用户认证密钥
+            market_id: 市场ID (tool_web 或 floor_web)
+            start: 起始位置，默认0
+            count: 获取数量，默认20
+
+        Returns:
+            API响应的字典
+
+        Raises:
+            Exception: 请求失败时抛出
+        """
+        # 1. 构造URL参数
+        device_code_encoded = f"%5Bd%5D{self.device_code}"
+
+        url = (
+            f"{self.base_url}/message/new/list/ANDROID/4.1.8"
+            f"?platform=2"
+            f"&gkey=000000"
+            f"&app_version=4.3.0.5.1"
+            f"&versioncode=20141498"
+            f"&market_id={market_id}"
+            f"&_key={_key}"
+            f"&device_code={device_code_encoded}"
+            f"&phone_brand_type=UN"
+            f"&type_id=8"
+            f"&start={start}"
+            f"&count={count}"
+        )
+
+        # 2. 设置请求头
+        headers = {
+            "User-Agent": "okhttp/3.8.1",
+        }
+
+        try:
+            # 3. 发送GET请求
+            if not self.session:
+                raise Exception("HTTP session 未初始化")
+
+            async with self.session.get(url, headers=headers) as response:
+                response_text = await response.text()
+                response_data = await self._safe_json_parse(response, response_text)
+
+                return response_data
+
+        except aiohttp.ClientError as e:
+            logger.error(f"网络请求错误: {e}")
+            raise Exception(f"网络请求错误: {e}")
+        except Exception as e:
+            logger.error(f"获取消息列表异常: {e}")
+            raise
+
+    def _generate_comment_sign(
+        self, _key: str, post_id: str, text: str, comment_id: int = 0
+    ) -> str:
+        """
+        生成评论请求签名
+
+        Args:
+            _key: 用户认证密钥
+            post_id: 帖子ID
+            text: 评论内容
+            comment_id: 评论ID，新评论为0
+
+        Returns:
+            MD5签名字符串（大写）
+        """
+        params = {
+            "_key": _key,
+            "comment_id": str(comment_id),
+            "device_code": "",
+            "images": "",
+            "post_id": post_id,
+            "text": text,
+        }
+
+        # 按 key 升序排序并拼接
+        sign_string = "".join([f"{k}{v}" for k, v in sorted(params.items())])
+
+        # 追加密钥并计算 MD5
+        sign_string += "fa1c28a5b62e79c3e63d9030b6142e4b"
+
+        return hashlib.md5(sign_string.encode("utf-8")).hexdigest().upper()
+
+    async def create_comment(
+        self,
+        _key: str,
+        market_id: str,
+        post_id: int,
+        text: str,
+        comment_id: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        创建评论（发送消息）
+
+        Args:
+            _key: 用户认证密钥
+            market_id: 市场ID
+            post_id: 帖子ID
+            text: 评论内容
+            comment_id: 评论ID，新评论为0
+
+        Returns:
+            API响应的字典
+
+        Raises:
+            Exception: 请求失败时抛出
+        """
+        # 1. 生成签名
+        sign = self._generate_comment_sign(_key, str(post_id), text, comment_id)
+
+        # 2. 构造 URL 参数
+        url = (
+            f"{self.base_url}/comment/create/ANDROID/4.2"
+            f"?platform=2"
+            f"&gkey=000000"
+            f"&app_version=4.3.0.2"
+            f"&versioncode=20141492"
+            f"&market_id={market_id}"
+            f"&_key={_key}"
+        )
+
+        # 3. 构造请求体
+        data = {
+            "post_id": post_id,
+            "comment_id": comment_id,
+            "text": text,
+            "patcha": "",
+            "images": "",
+            "remindUsers": "",
+            "sign": sign,
+        }
+
+        # 4. 设置请求头
+        headers = {
+            "User-Agent": "okhttp/3.8.1",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+
+        try:
+            # 5. 发送 POST 请求
+            if not self.session:
+                raise Exception("HTTP session 未初始化")
+
+            async with self.session.post(url, data=data, headers=headers) as response:
+                response_text = await response.text()
+                response_data = await self._safe_json_parse(response, response_text)
+
+                return response_data
+
+        except aiohttp.ClientError as e:
+            logger.error(f"网络请求错误: {e}")
+            raise Exception(f"网络请求错误: {e}")
+        except Exception as e:
+            logger.error(f"创建评论异常: {e}")
+            raise
