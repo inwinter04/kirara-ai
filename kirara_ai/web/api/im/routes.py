@@ -10,12 +10,19 @@ from kirara_ai.im.manager import IMManager
 from kirara_ai.logger import get_logger
 
 from ...auth.middleware import require_auth
-from .models import (IMAdapterConfig, IMAdapterConfigSchema, IMAdapterList, IMAdapterResponse, IMAdapterStatus,
-                     IMAdapterTypes)
+from .models import (
+    IMAdapterConfig,
+    IMAdapterConfigSchema,
+    IMAdapterList,
+    IMAdapterResponse,
+    IMAdapterStatus,
+    IMAdapterTypes,
+)
 
 im_bp = Blueprint("im", __name__)
 
 logger = get_logger("Web.IM")
+
 
 def _create_adapter(manager: IMManager, name: str, adapter: str, config: dict):
     registry: IMRegistry = g.container.resolve(IMRegistry)
@@ -24,6 +31,7 @@ def _create_adapter(manager: IMManager, name: str, adapter: str, config: dict):
     adapter_config_class = adapter_info.config_class
     adapter_config = adapter_config_class(**config)
     manager.create_adapter(name, adapter_class, adapter_config)
+
 
 @im_bp.route("/types", methods=["GET"])
 @require_auth
@@ -67,16 +75,18 @@ async def get_adapter(adapter_id: str):
     adapter_config = manager.get_adapter_config(adapter_id)
     adapter = manager.get_adapter(adapter_id)
     bot_profile = None
-    if manager.is_adapter_running(adapter_id) and isinstance(adapter, BotProfileAdapter):
+    if manager.is_adapter_running(adapter_id) and isinstance(
+        adapter, BotProfileAdapter
+    ):
         bot_profile = await adapter.get_bot_profile()
-        
+
     return IMAdapterResponse(
         adapter=IMAdapterStatus(
             name=adapter_id,
             adapter=adapter_config.adapter,
             is_running=manager.is_adapter_running(adapter_id),
             config=adapter_config.config,
-            bot_profile=bot_profile
+            bot_profile=bot_profile,
         )
     ).model_dump()
 
@@ -101,14 +111,16 @@ async def create_adapter():
         return jsonify({"error": "Adapter ID already exists"}), 400
 
     # 更新配置
-    _create_adapter(manager, adapter_info.name, adapter_info.adapter, adapter_info.config)
+    _create_adapter(
+        manager, adapter_info.name, adapter_info.adapter, adapter_info.config
+    )
     if adapter_info.enable:
         try:
             await manager.start_adapter(adapter_info.name, asyncio.get_event_loop())
         except Exception as e:
             manager.delete_adapter(adapter_info.name)
             return jsonify({"error": str(e)}), 500
-        
+
     config.ims.append(adapter_info)
     # 保存配置到文件
     ConfigLoader.save_config_with_backup(CONFIG_FILE, config)
@@ -144,7 +156,9 @@ async def update_adapter(adapter_id: str):
 
     # 2. 如果名称改变，检查新名称是否冲突
     if adapter_id != adapter_info.name and manager.has_adapter(adapter_info.name):
-        return jsonify({"error": f"Adapter name '{adapter_info.name}' already exists"}), 400
+        return jsonify(
+            {"error": f"Adapter name '{adapter_info.name}' already exists"}
+        ), 400
 
     # 3. 检查适配器类型是否有效
     if adapter_info.adapter not in registry.get_all_adapters():
@@ -159,12 +173,22 @@ async def update_adapter(adapter_id: str):
 
     # --- 更新 IMManager ---
     # 从管理器中删除旧的实例
+    old_adapter_config = manager.get_adapter_config(adapter_id)
     manager.delete_adapter(adapter_id)
 
+    # 保留旧配置中的 device_code（如果新配置中没有）
+    if (
+        "device_code" not in adapter_info.config
+        and "device_code" in old_adapter_config.config
+    ):
+        adapter_info.config["device_code"] = old_adapter_config.config["device_code"]
+
     # 使用新名称和配置创建新的实例
-    _create_adapter(manager, adapter_info.name, adapter_info.adapter, adapter_info.config)
+    _create_adapter(
+        manager, adapter_info.name, adapter_info.adapter, adapter_info.config
+    )
     config.ims.append(adapter_info)
-    
+
     # --- 尝试启动新适配器 (如果启用) ---
     is_now_running = False
     if adapter_info.enable:
@@ -172,7 +196,9 @@ async def update_adapter(adapter_id: str):
             await manager.start_adapter(adapter_info.name, loop)
             is_now_running = True
         except Exception as e:
-            logger.error(f"Failed to start adapter '{adapter_info.name}' after update: {e}")
+            logger.error(
+                f"Failed to start adapter '{adapter_info.name}' after update: {e}"
+            )
 
     # --- 保存配置到文件 ---
     # 无论是否启动成功，都保存更新后的配置
@@ -180,22 +206,28 @@ async def update_adapter(adapter_id: str):
 
     # --- 准备并返回响应 ---
     bot_profile = None
-    if is_now_running: # 仅在成功启动后尝试获取 profile
+    if is_now_running:  # 仅在成功启动后尝试获取 profile
         adapter_instance = manager.get_adapter(adapter_info.name)
         if isinstance(adapter_instance, BotProfileAdapter):
             try:
                 # 添加超时以防卡住
-                bot_profile = await asyncio.wait_for(adapter_instance.get_bot_profile(), timeout=5.0)
+                bot_profile = await asyncio.wait_for(
+                    adapter_instance.get_bot_profile(), timeout=5.0
+                )
             except Exception as e:
-                logger.error(f"Failed to get bot profile for {adapter_info.name} after update: {e}")
+                logger.error(
+                    f"Failed to get bot profile for {adapter_info.name} after update: {e}"
+                )
 
-    return IMAdapterResponse(adapter=IMAdapterStatus(
-        name=adapter_info.name, # 使用新名称
-        adapter=adapter_info.adapter,
-        is_running=is_now_running, # 反映当前实际运行状态
-        config=adapter_info.config,
-        bot_profile=bot_profile
-    )).model_dump()
+    return IMAdapterResponse(
+        adapter=IMAdapterStatus(
+            name=adapter_info.name,  # 使用新名称
+            adapter=adapter_info.adapter,
+            is_running=is_now_running,  # 反映当前实际运行状态
+            config=adapter_info.config,
+            bot_profile=bot_profile,
+        )
+    ).model_dump()
 
 
 @im_bp.route("/adapters/<adapter_id>", methods=["DELETE"])

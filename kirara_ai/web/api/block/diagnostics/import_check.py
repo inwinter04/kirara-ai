@@ -4,9 +4,18 @@ import logging
 import os
 from typing import List, Optional, Tuple
 
-from lsprotocol.types import (CodeAction, CodeActionKind, CodeActionParams, Diagnostic, DiagnosticSeverity, Position,
-                              Range, TextEdit, WorkspaceEdit)
-from pygls.workspace import Document
+from lsprotocol.types import (
+    CodeAction,
+    CodeActionKind,
+    CodeActionParams,
+    Diagnostic,
+    DiagnosticSeverity,
+    Position,
+    Range,
+    TextEdit,
+    WorkspaceEdit,
+)
+from pygls.workspace import TextDocument
 
 from .base_diagnostic import BaseDiagnostic
 
@@ -18,7 +27,9 @@ class ImportDiagnostic(BaseDiagnostic):
 
     SOURCE_NAME: str = "import-check"
 
-    def _get_package_context(self, path: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    def _get_package_context(
+        self, path: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str]]:
         """获取文件路径对应的目录和包名"""
         if not path or not os.path.exists(path):
             return None, None
@@ -40,7 +51,7 @@ class ImportDiagnostic(BaseDiagnostic):
 
         return file_dir, package_name
 
-    def check(self, doc: Document) -> List[Diagnostic]:
+    def check(self, doc: TextDocument) -> List[Diagnostic]:
         """检查导入语句是否有效"""
         diagnostics = []
         source = doc.source
@@ -58,7 +69,7 @@ class ImportDiagnostic(BaseDiagnostic):
                 import_node: Optional[ast.stmt] = None
                 if not isinstance(node, ast.stmt):
                     continue
-                line_no = node.lineno if hasattr(node, 'lineno') else 0
+                line_no = node.lineno if hasattr(node, "lineno") else 0
 
                 if isinstance(node, ast.Import):
                     import_node = node
@@ -73,25 +84,33 @@ class ImportDiagnostic(BaseDiagnostic):
                             if spec is None:
                                 message = f"无法找到模块 '{module_name_str}'"
                                 diagnostic = self._create_diagnostic(
-                                    message, import_node, DiagnosticSeverity.Error,
-                                    data={"fix_type": "remove_import"}
+                                    message,
+                                    import_node,
+                                    DiagnosticSeverity.Error,
+                                    data={"fix_type": "remove_import"},
                                 )
                                 diagnostics.append(diagnostic)
                                 reported_issues.add(issue_key)
                         except ModuleNotFoundError:
                             message = f"无法找到模块 '{module_name_str}'"
                             diagnostic = self._create_diagnostic(
-                                message, import_node, DiagnosticSeverity.Error,
-                                data={"fix_type": "remove_import"}
+                                message,
+                                import_node,
+                                DiagnosticSeverity.Error,
+                                data={"fix_type": "remove_import"},
                             )
                             diagnostics.append(diagnostic)
                             reported_issues.add(issue_key)
-                        except Exception as e:  # Catch other potential errors during find_spec
+                        except (
+                            Exception
+                        ) as e:  # Catch other potential errors during find_spec
                             message = f"检查导入 '{module_name_str}' 时出错: {e}"
                             diagnostic = self._create_diagnostic(
-                                message, import_node, DiagnosticSeverity.Warning,  # Warning for general errors
+                                message,
+                                import_node,
+                                DiagnosticSeverity.Warning,  # Warning for general errors
                                 # Still offer removal
-                                data={"fix_type": "remove_import"}
+                                data={"fix_type": "remove_import"},
                             )
                             diagnostics.append(diagnostic)
                             reported_issues.add(issue_key)
@@ -127,32 +146,37 @@ class ImportDiagnostic(BaseDiagnostic):
                             if file_dir and package_name:
                                 # Resolve the name relative to the current file's package context
                                 resolved_name = importlib.util.resolve_name(
-                                    resolving_name, package_name)
-                                resolved_spec = importlib.util.find_spec(
-                                    resolved_name)
+                                    resolving_name, package_name
+                                )
+                                resolved_spec = importlib.util.find_spec(resolved_name)
                                 if resolved_spec is None:
                                     error_message = f"无法找到相对导入的模块 '{resolving_name}' (解析为 '{resolved_name}' 来自 '{package_name}')"
                             else:
                                 # Cannot reliably check relative imports without path/package context
                                 error_message = f"无法可靠地检查相对导入 '{resolving_name}' (缺少文件路径或包上下文)"
-                                severity = DiagnosticSeverity.Warning  # Downgrade severity if unsure
+                                severity = (
+                                    DiagnosticSeverity.Warning
+                                )  # Downgrade severity if unsure
                         elif module_name_str:  # Absolute import
-                            resolved_spec = importlib.util.find_spec(
-                                module_name_str)
+                            resolved_spec = importlib.util.find_spec(module_name_str)
                             if resolved_spec is None:
                                 error_message = f"无法找到模块 '{module_name_str}'"
 
                     except (ImportError, ValueError) as e:
                         error_message = f"无法解析或找到导入 '{resolving_name}': {e}"
                     except Exception as e:
-                        error_message = f"检查导入 '{resolving_name}' 时发生意外错误: {e}"
+                        error_message = (
+                            f"检查导入 '{resolving_name}' 时发生意外错误: {e}"
+                        )
                         severity = DiagnosticSeverity.Warning
 
                     # Create diagnostic if an error occurred
                     if error_message:
                         diagnostic = self._create_diagnostic(
-                            error_message, import_node, severity,
-                            data={"fix_type": "remove_import"}
+                            error_message,
+                            import_node,
+                            severity,
+                            data={"fix_type": "remove_import"},
                         )
                         diagnostics.append(diagnostic)
                         reported_issues.add(issue_key)
@@ -165,11 +189,13 @@ class ImportDiagnostic(BaseDiagnostic):
 
         return diagnostics
 
-    def get_code_actions(self, params: CodeActionParams, relevant_diagnostics: List[Diagnostic]) -> List[CodeAction]:
+    def get_code_actions(
+        self, params: CodeActionParams, relevant_diagnostics: List[Diagnostic]
+    ) -> List[CodeAction]:
         """提供删除无效导入的代码操作"""
         actions = []
         doc_uri = params.text_document.uri
-        document = self.ls.workspace.get_document(doc_uri)
+        document = self.ls.workspace.get_text_document(doc_uri)
         if not document:
             return []
 
@@ -202,22 +228,24 @@ class ImportDiagnostic(BaseDiagnostic):
                 if delete_end_line_exclusive < len(lines):
                     # Delete up to the start of the next line
                     delete_end_pos = Position(
-                        line=delete_end_line_exclusive, character=0)
+                        line=delete_end_line_exclusive, character=0
+                    )
                 else:
                     # Delete to the end of the last line of the file
                     delete_end_pos = Position(
-                        line=end_line, character=len(lines[end_line]))
+                        line=end_line, character=len(lines[end_line])
+                    )
 
                 # Create the TextEdit to remove the line(s)
                 text_edit = TextEdit(
-                    range=Range(start=delete_start_pos, end=delete_end_pos),
-                    new_text=""
+                    range=Range(start=delete_start_pos, end=delete_end_pos), new_text=""
                 )
 
                 # Extract module name from message for a better title if possible
                 module_name_match = diag.message.split("'")
-                title_suffix = f": {module_name_match[1]}" if len(
-                    module_name_match) > 1 else ""
+                title_suffix = (
+                    f": {module_name_match[1]}" if len(module_name_match) > 1 else ""
+                )
                 title = f"移除无效的导入语句{title_suffix}"
 
                 edit = WorkspaceEdit(changes={doc_uri: [text_edit]})
@@ -227,7 +255,7 @@ class ImportDiagnostic(BaseDiagnostic):
                     kind=CodeActionKind.QuickFix,
                     diagnostics=[diag],
                     edit=edit,
-                    is_preferred=False  # Deleting code might not always be preferred
+                    is_preferred=False,  # Deleting code might not always be preferred
                 )
                 actions.append(action)
 
