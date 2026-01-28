@@ -218,6 +218,13 @@ GET/backend-api/api/llm/types/{adapter_type}/config-schema
   - `api_base`: API 基础 URL
   - `temperature`: 温度参数(可选)
 
+### ZhipuAI（智谱清言）
+- 适配器类型: `zhipuai`
+- 支持模型: glm-4, glm-4-flash, glm-4-plus 等
+- 配置项:
+  - `api_key`: API 密钥
+  - `api_base`: API 基础 URL（默认: `https://open.bigmodel.cn/api/paas/v4`）
+
 ### Azure OpenAI
 - 适配器类型: `azure`
 - 支持 Azure OpenAI 服务部署的各类模型
