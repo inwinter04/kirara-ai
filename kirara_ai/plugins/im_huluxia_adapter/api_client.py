@@ -151,13 +151,22 @@ class HuluxiaApiClient:
         }
 
         try:
-            # 6. 发送请求
+            # 5. 发送请求
             if not self.session:
                 raise Exception("HTTP session 未初始化")
+
+            logger.debug(f"[API_CLIENT] 登录请求URL: {url}")
+            logger.debug(
+                f"[API_CLIENT] 登录请求数据: account={account}, password={'*' * len(md5_password)}"
+            )
 
             async with self.session.post(url, data=data, headers=headers) as response:
                 response_text = await response.text()
                 response_data = await self._safe_json_parse(response, response_text)
+
+                logger.info(
+                    f"[API_CLIENT] 登录响应: status={response.status}, response_data={response_data}"
+                )
 
                 # 7. 提取用户信息
                 if "user" in response_data and "_key" in response_data:
@@ -387,9 +396,17 @@ class HuluxiaApiClient:
             if not self.session:
                 raise Exception("HTTP session 未初始化")
 
+            logger.debug(
+                f"[API_CLIENT] 创建评论请求数据: post_id={post_id}, comment_id={comment_id}, text={text[:50] if text else ''}..., sign={sign}"
+            )
+
             async with self.session.post(url, data=data, headers=headers) as response:
                 response_text = await response.text()
                 response_data = await self._safe_json_parse(response, response_text)
+
+                logger.debug(
+                    f"[API_CLIENT] 创建评论响应: status={response.status}, response_text={response_text[:200] if response_text else ''}"
+                )
 
                 return response_data
 

@@ -31,7 +31,7 @@ llms:
       models:                    # 支持的模型列表
         - "deepseek-chat"
         - "deepseek-coder"
-    
+
     # OpenAI API 配置
     - name: "openai-gpt4"        # 后端名称
       adapter: "openai"          # 使用的适配器
@@ -42,6 +42,17 @@ llms:
       models:                    # 支持的模型列表
         - "gpt-4"
         - "gpt-4-turbo"
+
+    # 智谱清言 API 配置
+    - name: "zhipuai-glm4"       # 后端名称
+      adapter: "zhipuai"         # 使用的适配器
+      enable: true               # 是否启用
+      config:                    # API 具体配置
+        api_key: "your-zhipuai-api-key"  # 智谱AI API 密钥
+        # api_base 默认为 "https://open.bigmodel.cn/api/paas/v4"，可省略
+      models:                    # 支持的模型列表（留空则自动检测）
+        - "glm-4"
+        - "glm-4-flash"
 
 # 默认配置
 defaults:

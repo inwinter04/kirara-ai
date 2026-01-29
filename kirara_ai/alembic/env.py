@@ -18,6 +18,7 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 from kirara_ai.database.manager import Base
 from kirara_ai.tracing.models import LLMRequestTrace  # noqa: F401
+from kirara_ai.plugins.im_huluxia_adapter.models import HuluxiaAdapterState  # noqa: F401
 
 target_metadata = Base.metadata
 
@@ -65,9 +66,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()
