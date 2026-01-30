@@ -232,6 +232,7 @@ class HuluxiaApiClient:
 
         try:
             if not self.session:
+                logger.warning("[VERIFY] session 未初始化，返回 False")
                 return False
 
             async with self.session.get(url, headers=headers) as response:
@@ -239,10 +240,22 @@ class HuluxiaApiClient:
 
                 # 检查状态字段
                 status = response_data.get("status", 0)
-                return status == 1
+                msg = response_data.get("msg", "")
+
+                logger.debug(f"[VERIFY] 解析结果: status={status}, msg={msg}")
+
+                result = status == 1
+                logger.info(
+                    f"[VERIFY] 验证结果: {'有效' if result else '无效'} (status={status})"
+                )
+
+                return result
 
         except Exception as e:
-            logger.error(f"验证登录状态失败: {e}")
+            logger.error(f"[VERIFY] 验证登录状态失败: {e}")
+            import traceback
+
+            logger.error(f"[VERIFY] 异常堆栈: {traceback.format_exc()}")
             return False
 
     async def get_message_list(

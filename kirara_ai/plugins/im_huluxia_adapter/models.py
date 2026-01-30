@@ -54,6 +54,12 @@ class HuluxiaConfig(BaseModel):
         le=300,
     )
 
+    key_check_time: str = Field(
+        title="每日检查key有效时间",
+        description="每天定时检查登录key有效性的时间，格式为 HH:MM，如 03:00",
+        default="03:00",
+    )
+
     # ===== 消息发送配置 =====
     comment_delay_ms: int = Field(
         title="评论发送延迟（毫秒）",
