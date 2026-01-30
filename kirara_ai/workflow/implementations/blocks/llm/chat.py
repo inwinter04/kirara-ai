@@ -1,7 +1,11 @@
 import asyncio
+import random
 import re
+import time
 from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional
+
+import httpx
 
 from kirara_ai.im.message import ImageMessage, IMMessage, MessageElement, TextMessage
 from kirara_ai.im.sender import ChatSender
@@ -18,7 +22,9 @@ from kirara_ai.workflow.core.block import Block, Input, Output, ParamMeta
 from kirara_ai.workflow.core.execution.executor import WorkflowExecutor
 
 
-def model_name_options_provider(container: DependencyContainer, block: Block) -> List[str]:
+def model_name_options_provider(
+    container: DependencyContainer, block: Block
+) -> List[str]:
     llm_manager: LLMManager = container.resolve(LLMManager)
     return sorted(llm_manager.get_supported_models(ModelType.LLM, LLMAbility.TextChat))
 
@@ -30,7 +36,12 @@ class ChatMessageConstructor(Block):
         "user_prompt_format": Input(
             "user_prompt_format", "本轮消息格式", str, "本轮消息格式", default=""
         ),
-        "memory_content": Input("memory_content", "历史消息对话", List[ComposableMessageType], "历史消息对话"),
+        "memory_content": Input(
+            "memory_content",
+            "历史消息对话",
+            List[ComposableMessageType],
+            "历史消息对话",
+        ),
         "system_prompt_format": Input(
             "system_prompt_format", "系统提示词", str, "系统提示词", default=""
         ),
@@ -93,10 +104,12 @@ class ChatMessageConstructor(Block):
             "{current_date_time}": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "{user_msg}": user_msg.content,
             "{user_name}": user_msg.sender.display_name,
-            "{user_id}": user_msg.sender.user_id
+            "{user_id}": user_msg.sender.user_id,
         }
 
-        if isinstance(memory_content, list) and all(isinstance(item, str) for item in memory_content):
+        if isinstance(memory_content, list) and all(
+            isinstance(item, str) for item in memory_content
+        ):
             replacements["{memory_content}"] = "\n".join(memory_content)
 
         for old, new in replacements.items():
@@ -104,22 +117,23 @@ class ChatMessageConstructor(Block):
             user_prompt_format = user_prompt_format.replace(old, new)
 
         # 再替换其他变量
-        system_prompt = self.substitute_variables(
-            system_prompt_format, executor)
+        system_prompt = self.substitute_variables(system_prompt_format, executor)
         user_prompt = self.substitute_variables(user_prompt_format, executor)
 
-        content: List[LLMChatContentPartType] = [
-            LLMChatTextContent(text=user_prompt)]
+        content: List[LLMChatContentPartType] = [LLMChatTextContent(text=user_prompt)]
         # 添加图片内容
         for image in user_msg.images or []:
             content.append(LLMChatImageContent(media_id=image.media_id))
 
         llm_msg = [
-            LLMChatMessage(role="system", content=[
-                           LLMChatTextContent(text=system_prompt)]),
+            LLMChatMessage(
+                role="system", content=[LLMChatTextContent(text=system_prompt)]
+            ),
         ]
 
-        if isinstance(memory_content, list) and all(isinstance(item, LLMChatMessage) for item in memory_content):
+        if isinstance(memory_content, list) and all(
+            isinstance(item, LLMChatMessage) for item in memory_content
+        ):
             llm_msg.extend(memory_content)  # type: ignore
 
         llm_msg.append(LLMChatMessage(role="user", content=content))
@@ -141,11 +155,48 @@ class ChatCompletion(Block):
             ParamMeta(
                 label="模型 ID",
                 description="要使用的模型 ID",
-                options_provider=model_name_options_provider),
+                options_provider=model_name_options_provider,
+            ),
         ] = None,
+        max_retries: Annotated[
+            int,
+            ParamMeta(
+                label="最大重试次数",
+                description="API请求失败时的最大重试次数",
+            ),
+        ] = 3,
+        retry_delay: Annotated[
+            float,
+            ParamMeta(
+                label="重试延迟(秒)",
+                description="重试之间的基础延迟时间",
+            ),
+        ] = 1.0,
     ):
         self.model_name = model_name
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         self.logger = get_logger("ChatCompletionBlock")
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        """判断错误是否可重试"""
+        # 网络相关错误
+        if isinstance(
+            error,
+            (httpx.NetworkError, httpx.TimeoutException, ConnectionError, TimeoutError),
+        ):
+            return True
+
+        # HTTP 状态码错误
+        if isinstance(error, httpx.HTTPStatusError):
+            # 5xx 服务器错误可重试
+            if 500 <= error.response.status_code < 600:
+                return True
+            # 429 Too Many Requests 可重试
+            if error.response.status_code == 429:
+                return True
+
+        return False
 
     def execute(self, prompt: List[LLMChatMessage]) -> Dict[str, Any]:
         llm_manager = self.container.resolve(LLMManager)
@@ -163,10 +214,59 @@ class ChatCompletion(Block):
 
         llm = llm_manager.get_llm(model_id)
         if not llm:
-            raise ValueError(
-                f"LLM {model_id} not found, please check the model name")
+            raise ValueError(f"LLM {model_id} not found, please check the model name")
         req = LLMChatRequest(messages=prompt, model=model_id)
-        return {"resp": llm.chat(req)}
+
+        # 重试逻辑
+        last_error = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                if attempt > 0:
+                    # 指数退避 + 随机抖动（避免惊群效应）
+                    base_delay = self.retry_delay * (2 ** (attempt - 1))
+                    jitter = random.uniform(0, base_delay * 0.1)  # 10% 抖动
+                    delay = base_delay + jitter
+                    self.logger.warning(
+                        f"Retry attempt {attempt}/{self.max_retries} after {delay:.2f}s delay. "
+                        f"Previous error: {last_error}"
+                    )
+                    time.sleep(delay)
+
+                return {"resp": llm.chat(req)}
+
+            except Exception as e:
+                last_error = e
+                is_retryable = self._is_retryable_error(e)
+
+                if attempt < self.max_retries and is_retryable:
+                    self.logger.warning(
+                        f"Request failed (attempt {attempt + 1}/{self.max_retries + 1}): {type(e).__name__}: {e}"
+                    )
+                    continue
+
+                # 不可重试的错误或已达到最大重试次数
+                error_msg = str(e)
+                if isinstance(e, httpx.HTTPStatusError):
+                    error_msg = (
+                        f"API request failed with status {e.response.status_code}: {e}"
+                    )
+                    if e.response.status_code >= 500:
+                        error_msg += (
+                            " (Server Error - the API service is experiencing issues)"
+                        )
+                    elif e.response.status_code == 429:
+                        error_msg += " (Rate Limit Exceeded - too many requests)"
+                elif isinstance(e, (httpx.NetworkError, ConnectionError)):
+                    error_msg = (
+                        f"Network error: Unable to reach the API server. Details: {e}"
+                    )
+                elif isinstance(e, httpx.TimeoutException):
+                    error_msg = f"Request timeout: The API server did not respond in time. Details: {e}"
+
+                self.logger.error(
+                    f"LLM request failed after {attempt + 1} attempts: {error_msg}"
+                )
+                raise ValueError(error_msg) from e
 
 
 class ChatResponseConverter(Block):
@@ -186,8 +286,9 @@ class ChatResponseConverter(Block):
                         message_elements.append(TextMessage(element.strip()))
             elif isinstance(part, LLMChatImageContent):
                 message_elements.append(ImageMessage(media_id=part.media_id))
-        msg = IMMessage(sender=ChatSender.get_bot_sender(),
-                        message_elements=message_elements)
+        msg = IMMessage(
+            sender=ChatSender.get_bot_sender(), message_elements=message_elements
+        )
         return {"msg": msg}
 
 
@@ -195,57 +296,74 @@ class ChatCompletionWithTools(Block):
     """
     支持工具调用的LLM对话块
     """
+
     name = "chat_completion_with_tools"
     inputs = {
-        "msg": Input("msg", "LLM 对话记录", List[LLMChatMessage], "LLM 的 prompt，即由 system、user、assistant和工具调用及结果的完整对话记录"),
-        "tools": Input("tools", "工具列表", List[Tool], "工具列表")
+        "msg": Input(
+            "msg",
+            "LLM 对话记录",
+            List[LLMChatMessage],
+            "LLM 的 prompt，即由 system、user、assistant和工具调用及结果的完整对话记录",
+        ),
+        "tools": Input("tools", "工具列表", List[Tool], "工具列表"),
     }
     outputs = {
         "resp": Output("resp", "LLM 消息回应", LLMChatResponse, "模型返回给用户的消息"),
-        "iteration_msgs": Output("iteration_msgs", "中间步骤消息", List[ComposableMessageType], "迭代过程中产生的所有消息，可以用记忆存储")
+        "iteration_msgs": Output(
+            "iteration_msgs",
+            "中间步骤消息",
+            List[ComposableMessageType],
+            "迭代过程中产生的所有消息，可以用记忆存储",
+        ),
     }
 
     container: DependencyContainer
 
-    def __init__(self, model_name: Annotated[
-        str,
-        ParamMeta(
-            label="模型 ID, 需要支持函数调用",
-            description="支持函数调用的模型",
-            options_provider=model_name_options_provider)
-    ],
+    def __init__(
+        self,
+        model_name: Annotated[
+            str,
+            ParamMeta(
+                label="模型 ID, 需要支持函数调用",
+                description="支持函数调用的模型",
+                options_provider=model_name_options_provider,
+            ),
+        ],
         max_iterations: Annotated[
-        int,
-        ParamMeta(
-            label="最大迭代次数",
-            description="允许调用模型请求的最大次数，在进行最后一次请求时，模型将不允许调用工具")
-    ] = 4):
+            int,
+            ParamMeta(
+                label="最大迭代次数",
+                description="允许调用模型请求的最大次数，在进行最后一次请求时，模型将不允许调用工具",
+            ),
+        ] = 4,
+    ):
         self.model_name = model_name
         self.max_iterations = max_iterations
         self.logger = get_logger("Block.ChatCompletionWithTools")
 
     def execute(self, msg: List[LLMChatMessage], tools: List[Tool]) -> Dict[str, Any]:
         if not self.model_name:
-            raise ValueError(
-                "need a model name which support function calling")
+            raise ValueError("need a model name which support function calling")
         else:
             self.logger.info(
-                f"Using  model: {self.model_name} to execute function calling")
+                f"Using  model: {self.model_name} to execute function calling"
+            )
 
         loop = self.container.resolve(asyncio.AbstractEventLoop)
         llm = self.container.resolve(LLMManager).get_llm(self.model_name)
         if not llm:
             raise ValueError(
-                f"LLM {self.model_name} not found, please check the model name")
+                f"LLM {self.model_name} not found, please check the model name"
+            )
 
         iteration_msgs: List[LLMChatMessage] = []
         iter_count = 0
         while iter_count < self.max_iterations:
             # 在这里指定llm的model
-            self.logger.debug(
-                f"Iteration {iter_count+1} of {self.max_iterations}")
+            self.logger.debug(f"Iteration {iter_count + 1} of {self.max_iterations}")
             request_body = LLMChatRequest(
-                messages=msg + iteration_msgs, model=self.model_name)
+                messages=msg + iteration_msgs, model=self.model_name
+            )
             if tools is not None and len(tools) > 0:
                 request_body.tools = tools
 
@@ -264,16 +382,30 @@ class ChatCompletionWithTools(Block):
                     actual_tool = tools_mapping.get(tool_call.function.name)
                     if actual_tool:
                         self.logger.debug(
-                            f"Invoking tool: {actual_tool.name}({tool_call.function.arguments})")
-                        resp_future = asyncio.run_coroutine_threadsafe(
-                            actual_tool.invokeFunc(tool_call), loop
+                            f"Invoking tool: {actual_tool.name}({tool_call.function.arguments})"
                         )
-                        tool_result_msg = LLMChatMessage(
-                            role="tool", content=[resp_future.result()])
-                        iteration_msgs.append(tool_result_msg)
+                        try:
+                            resp_future = asyncio.run_coroutine_threadsafe(
+                                actual_tool.invokeFunc(tool_call), loop
+                            )
+                            result = resp_future.result(
+                                timeout=30
+                            )  # 添加超时避免无限阻塞
+                            tool_result_msg = LLMChatMessage(
+                                role="tool", content=[result]
+                            )
+                            iteration_msgs.append(tool_result_msg)
+                        except Exception as tool_error:
+                            self.logger.error(
+                                f"Tool invocation failed for {actual_tool.name}: {tool_error}"
+                            )
+                            # 将工具错误作为结果返回给 LLM
+                            tool_result_msg = LLMChatMessage(
+                                role="tool", content=[f"Error: {str(tool_error)}"]
+                            )
+                            iteration_msgs.append(tool_result_msg)
             else:
-                self.logger.debug(
-                    "No tool calls found, return response directly")
+                self.logger.debug("No tool calls found, return response directly")
                 return {"resp": response, "iteration_msgs": iteration_msgs}
-        
+
         return {"resp": response, "iteration_msgs": iteration_msgs}

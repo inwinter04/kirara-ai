@@ -4,21 +4,30 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List
 
+import httpx
+
 from kirara_ai.events.event_bus import EventBus
 from kirara_ai.ioc.container import DependencyContainer
 from kirara_ai.ioc.inject import Inject
 from kirara_ai.logger import get_logger
 from kirara_ai.workflow.core.block import Block, ConditionBlock, LoopBlock
 from kirara_ai.workflow.core.block.registry import BlockRegistry
-from kirara_ai.workflow.core.execution.exceptions import (BlockExecutionFailedException,
-                                                          WorkflowExecutionTimeoutException)
+from kirara_ai.workflow.core.execution.exceptions import (
+    BlockExecutionFailedException,
+    WorkflowExecutionTimeoutException,
+)
 from kirara_ai.workflow.core.workflow import Workflow
 
 
 class WorkflowExecutor:
-    
     @Inject()
-    def __init__(self, container: DependencyContainer, workflow: Workflow, registry: BlockRegistry, event_bus: EventBus):
+    def __init__(
+        self,
+        container: DependencyContainer,
+        workflow: Workflow,
+        registry: BlockRegistry,
+        event_bus: EventBus,
+    ):
         """
         初始化 WorkflowExecutor 实例。
 
@@ -50,11 +59,15 @@ class WorkflowExecutor:
             # 验证连线的数据类型是否匹配
             source_output = wire.source_block.outputs[wire.source_output]
             target_input = wire.target_block.inputs[wire.target_input]
-            
+
             # 使用 BlockRegistry 的类型系统进行类型兼容性检查
-            source_type = self.registry._type_system.get_type_name(source_output.data_type)
-            target_type = self.registry._type_system.get_type_name(target_input.data_type)
-            
+            source_type = self.registry._type_system.get_type_name(
+                source_output.data_type
+            )
+            target_type = self.registry._type_system.get_type_name(
+                target_input.data_type
+            )
+
             if not self.registry.is_type_compatible(source_type, target_type):
                 error_msg = (
                     f"Type mismatch in wire: {wire.source_block.name}.{wire.source_output} "
@@ -63,10 +76,11 @@ class WorkflowExecutor:
                 )
                 self.logger.error(error_msg)
                 raise TypeError(error_msg)
-                
+
             # 将目标块添加到源块的执行图中
             self.execution_graph[wire.source_block].append(wire.target_block)
             # self.logger.debug(f"Added edge: {wire.source_block.name} -> {wire.target_block.name}")
+
     async def run(self) -> Dict[str, Any]:
         """
         执行工作流，返回每个块的执行结果。
@@ -74,6 +88,7 @@ class WorkflowExecutor:
         :return: 包含每个块执行结果的字典，键为块名，值为块的输出
         """
         from kirara_ai.events import WorkflowExecutionBegin, WorkflowExecutionEnd
+
         self.event_bus.post(WorkflowExecutionBegin(self.workflow, self))
         self.logger.info("Starting workflow execution")
         loop = asyncio.get_event_loop()
@@ -86,11 +101,15 @@ class WorkflowExecutor:
             entry_blocks = [block for block in self.workflow.blocks if not block.inputs]
             # self.logger.debug(f"Identified entry blocks: {[b.name for b in entry_blocks]}")
             try:
-                async with asyncio.timeout(max_timeout): # type: ignore
+                async with asyncio.timeout(max_timeout):  # type: ignore
                     await self._execute_nodes(entry_blocks, executor, loop)
             except asyncio.TimeoutError as e:
-                self.event_bus.post(WorkflowExecutionEnd(self.workflow, self, self.results))
-                raise WorkflowExecutionTimeoutException(f"Workflow execution timed out after {max_timeout} seconds") from e
+                self.event_bus.post(
+                    WorkflowExecutionEnd(self.workflow, self, self.results)
+                )
+                raise WorkflowExecutionTimeoutException(
+                    f"Workflow execution timed out after {max_timeout} seconds"
+                ) from e
 
         self.logger.info("Workflow execution completed")
         self.event_bus.post(WorkflowExecutionEnd(self.workflow, self, self.results))
@@ -194,9 +213,68 @@ class WorkflowExecutor:
                     # self.logger.debug(f"Block {block.name} is terminal node")
                     pass
             except BlockExecutionFailedException as e:
+                # 已经是格式化的异常，直接重新抛出
                 raise e
+            except ValueError as e:
+                raise BlockExecutionFailedException(
+                    message=str(e),
+                    block_name=block.name,
+                    block_type=type(block).__name__,
+                    original_error=e,
+                    is_retryable=False,
+                ) from e
+            except (ConnectionError, TimeoutError) as e:
+                raise BlockExecutionFailedException(
+                    message=f"Network error occurred: {str(e)}",
+                    block_name=block.name,
+                    block_type=type(block).__name__,
+                    original_error=e,
+                    is_retryable=True,
+                ) from e
+            except httpx.HTTPError as e:
+                raise BlockExecutionFailedException(
+                    message=f"HTTP request failed: {str(e)}",
+                    block_name=block.name,
+                    block_type=type(block).__name__,
+                    original_error=e,
+                    is_retryable=True,
+                ) from e
+            except (ConnectionError, TimeoutError, OSError) as e:
+                # 网络相关错误
+                raise BlockExecutionFailedException(
+                    message=f"Network error occurred: {str(e)}",
+                    block_name=block.name,
+                    block_type=type(block).__name__,
+                    original_error=e,
+                    is_retryable=True,
+                ) from e
             except Exception as e:
-                raise BlockExecutionFailedException(f"Block {block.name} execution failed: {e}") from e
+                # 未知错误
+                error_type = type(e).__name__
+                error_msg = str(e)
+
+                # 提供更友好的错误消息
+                if "500" in error_msg or "Internal Server Error" in error_msg:
+                    friendly_msg = f"API服务暂时不可用 (500 Internal Server Error)"
+                elif "timeout" in error_msg.lower():
+                    friendly_msg = f"请求超时: {error_msg}"
+                elif "connection" in error_msg.lower():
+                    friendly_msg = f"连接失败: {error_msg}"
+                else:
+                    friendly_msg = error_msg
+
+                self.logger.error(
+                    f"Block [{block.name}] failed with {error_type}: {error_msg}",
+                    exc_info=True,
+                )
+
+                raise BlockExecutionFailedException(
+                    message=f"Execution failed: {friendly_msg}",
+                    block_name=block.name,
+                    block_type=type(block).__name__,
+                    original_error=e,
+                    is_retryable=False,
+                ) from e
 
     def _can_execute(self, block: Block) -> bool:
         """检查节点是否可以执行"""
@@ -229,7 +307,9 @@ class WorkflowExecutor:
                     and wire.source_block.name in self.results
                     and wire.source_output in self.results[wire.source_block.name]
                 ):
-                    self.logger.debug(f"Input [{block.name}.{input_name}] satisfied by [{wire.source_block.name}.{wire.source_output}] with value {self.results[wire.source_block.name][wire.source_output]}")
+                    self.logger.debug(
+                        f"Input [{block.name}.{input_name}] satisfied by [{wire.source_block.name}.{wire.source_output}] with value {self.results[wire.source_block.name][wire.source_output]}"
+                    )
                     input_satisfied = True
                     break
 
@@ -237,7 +317,9 @@ class WorkflowExecutor:
             if not input_satisfied and not block.inputs[input_name].nullable:
                 self.logger.info(f"Input [{block.name}.{input_name}] not satisfied")
                 return False
-        self.logger.debug(f"All inputs satisfied and predecessors completed for block {block.name}")
+        self.logger.debug(
+            f"All inputs satisfied and predecessors completed for block {block.name}"
+        )
         return True
 
     def _gather_inputs(self, block: Block) -> Dict[str, Any]:
@@ -255,18 +337,29 @@ class WorkflowExecutor:
         for input_name in block.inputs:
             if input_name in input_wire_map:
                 wire = input_wire_map[input_name]
-                if wire.source_block.name in self.results and wire.source_output in self.results[wire.source_block.name]:
+                if (
+                    wire.source_block.name in self.results
+                    and wire.source_output in self.results[wire.source_block.name]
+                ):
                     inputs[input_name] = self.results[wire.source_block.name][
                         wire.source_output
                     ]
                     # self.logger.debug(f"Resolved input {input_name} from {wire.source_block.name}.{wire.source_output}")
                 else:
                     raise BlockExecutionFailedException(
-                        f"Current block {block.name} depends on source block {wire.source_block.name} not executed for input {input_name}"
+                        message=f"Dependency error: block '{wire.source_block.name}' has not produced required output '{wire.source_output}'",
+                        block_name=block.name,
+                        block_type=type(block).__name__,
+                        original_error=None,
+                        is_retryable=False,
                     )
             elif not block.inputs[input_name].nullable:
                 raise BlockExecutionFailedException(
-                    f"Missing wire connection for required input {input_name} in block {block.name}"
+                    message=f"Configuration error: required input '{input_name}' is not connected",
+                    block_name=block.name,
+                    block_type=type(block).__name__,
+                    original_error=None,
+                    is_retryable=False,
                 )
 
         return inputs
