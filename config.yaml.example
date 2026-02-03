@@ -70,3 +70,28 @@ memory:
       db: 0                   # Redis 数据库编号
   max_entries: 100            # 最大记忆条目数
   default_scope: member       # 默认记忆作用域
+
+# MCP (Model Context Protocol) 服务器配置
+mcp:
+  servers:
+    # 智谱图像生成服务器示例
+    # 用于葫芦侠工作流的AI绘图功能
+    # - id: "zhipu-image-generator"
+    #   description: "智谱清言图像生成服务，使用 Cogview-3-Flash 模型"
+    #   command: "python"
+    #   args:
+    #     - "-m"
+    #     - "mcp_servers.zhipu_image_server"
+    #   env:
+    #     ZHIPU_API_KEY: "your-zhipuai-api-key"  # 替换为你的智谱API密钥
+    #   connection_type: "stdio"
+    #   enable: true
+    
+    # 你可以添加更多MCP服务器...
+    # - id: "another-mcp-server"
+    #   description: "另一个MCP服务器"
+    #   command: "some-command"
+    #   args: []
+    #   env: {}
+    #   connection_type: "stdio"  # 或 "sse"
+    #   enable: true

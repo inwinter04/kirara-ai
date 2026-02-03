@@ -3,7 +3,7 @@
   description: 群聊中使用 /chat 开头对话或者 被@ 时触发聊天
   workflow_id: chat:normal
   priority: 5
-  enabled: true
+  enabled: false
   rule_groups:
   - operator: or
     rules:
@@ -26,7 +26,7 @@
   description: 私聊时直接发送内容触发对话
   workflow_id: chat:normal
   priority: 5
-  enabled: true
+  enabled: false
   rule_groups:
   - operator: or
     rules:
@@ -42,7 +42,7 @@
   description: 骰子游戏，支持 XdY 格式
   workflow_id: game:dice
   priority: 5
-  enabled: true
+  enabled: false
   rule_groups:
   - operator: or
     rules:
@@ -55,7 +55,7 @@
   description: 抽卡模拟器
   workflow_id: game:gacha
   priority: 5
-  enabled: true
+  enabled: false
   rule_groups:
   - operator: or
     rules:
@@ -71,7 +71,7 @@
   description: 显示帮助信息
   workflow_id: system:help
   priority: 10
-  enabled: true
+  enabled: false
   rule_groups:
   - operator: or
     rules:
@@ -86,7 +86,7 @@
   description: 清空当前对话的记忆
   workflow_id: system:clear_memory
   priority: 10
-  enabled: true
+  enabled: false
   rule_groups:
   - operator: or
     rules:
@@ -107,4 +107,14 @@
     rules:
     - type: fallback
       config: {}
+  metadata: {}
+- rule_id: 2581d93e-6438-4ba2-bd21-50e316455af6
+  name: 葫芦侠水回复
+  description: 在葫芦侠中水回复
+  workflow_id: chat:glm_with_image
+  priority: 4
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules: []
   metadata: {}

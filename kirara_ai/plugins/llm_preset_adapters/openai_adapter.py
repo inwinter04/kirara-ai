@@ -185,16 +185,15 @@ class OpenAIAdapterChatBase(
         # Remove None fields
         data = {k: v for k, v in data.items() if v is not None}
 
-        logger.debug(f"Request: {data}")
+        logger.debug(f"Request: model={req.model}, messages_count={len(req.messages)}")
 
         response = requests.post(api_url, json=data, headers=headers)
         try:
             response.raise_for_status()
             response_data: dict = response.json()
         except Exception as e:
-            logger.error(f"Response: {response.text}")
+            logger.error(f"Response error: {response.text[:200]}")
             raise e
-        logger.debug(f"Response: {response_data}")
 
         choices: List[dict[str, Any]] = response_data.get("choices", [{}])
         first_choice = choices[0] if choices else {}
@@ -319,15 +318,19 @@ class OpenAIAdapter(OpenAIAdapterChatBase, LLMEmbeddingProtocol):
             data["thinking"] = {"type": "enabled"}
         # 删除 None 字段
         data = {k: v for k, v in data.items() if v is not None}
-        logger.debug(f"Request: {data}")
+        logger.debug(
+            f"Embedding Request: model={req.model}, inputs_count={len(req.inputs)}"
+        )
         response = requests.post(api_url, headers=headers, json=data)
         try:
             response.raise_for_status()
             response_data: EmbeddingResponse = response.json()
         except Exception as e:
-            logger.error(f"Response: {response.text}")
+            logger.error(f"Embedding error: {response.text[:200]}")
             raise e
-        logger.debug(f"Response: {response_data}")
+        logger.debug(
+            f"Embedding Response: embeddings_count={len(response_data['data'])}"
+        )
         return LLMEmbeddingResponse(
             vectors=[data["embedding"] for data in response_data["data"]],
             usage=Usage(
