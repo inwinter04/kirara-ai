@@ -307,9 +307,6 @@ class WorkflowExecutor:
                     and wire.source_block.name in self.results
                     and wire.source_output in self.results[wire.source_block.name]
                 ):
-                    self.logger.debug(
-                        f"Input [{block.name}.{input_name}] satisfied by [{wire.source_block.name}.{wire.source_output}] with value {self.results[wire.source_block.name][wire.source_output]}"
-                    )
                     input_satisfied = True
                     break
 
