@@ -2,11 +2,12 @@ import asyncio
 import os
 import signal
 import time
+from pathlib import Path
 
 from packaging import version
 
 from kirara_ai.config.config_loader import ConfigLoader
-from kirara_ai.config.global_config import GlobalConfig
+from kirara_ai.config.global_config import GlobalConfig, MCPServerConfig
 from kirara_ai.database import DatabaseManager
 from kirara_ai.events.application import ApplicationStarted, ApplicationStopping
 from kirara_ai.events.event_bus import EventBus
@@ -20,12 +21,19 @@ from kirara_ai.logger import get_logger
 from kirara_ai.mcp_module.manager import MCPServerManager
 from kirara_ai.media import MediaManager
 from kirara_ai.media.carrier import MediaCarrierRegistry, MediaCarrierService
-from kirara_ai.memory.composes import DefaultMemoryComposer, DefaultMemoryDecomposer, MultiElementDecomposer
+from kirara_ai.memory.composes import (
+    DefaultMemoryComposer,
+    DefaultMemoryDecomposer,
+    MultiElementDecomposer,
+)
 from kirara_ai.memory.memory_manager import MemoryManager
 from kirara_ai.memory.scopes import GlobalScope, GroupScope, MemberScope
 from kirara_ai.plugin_manager.plugin_loader import PluginLoader
 from kirara_ai.tracing import LLMTracer, TracingManager
-from kirara_ai.web.api.system.utils import get_installed_version, get_latest_pypi_version
+from kirara_ai.web.api.system.utils import (
+    get_installed_version,
+    get_latest_pypi_version,
+)
 from kirara_ai.web.app import WebServer
 from kirara_ai.workflow.core.block import BlockRegistry
 from kirara_ai.workflow.core.dispatch import DispatchRuleRegistry, WorkflowDispatcher
@@ -37,16 +45,22 @@ logger = get_logger("Entrypoint")
 
 _interrupt_count = 0  # 添加计数器
 
+
 async def check_update():
     """检查更新"""
     running_version = get_installed_version()
     logger.info("Checking for updates...")
     latest_version, _ = await get_latest_pypi_version("kirara-ai")
     logger.info(f"Running version: {running_version}, Latest version: {latest_version}")
-    backend_update_available = version.parse(latest_version) > version.parse(running_version)
+    backend_update_available = version.parse(latest_version) > version.parse(
+        running_version
+    )
     if backend_update_available:
-        logger.warning(f"New version {latest_version} is available. Please update to the latest version.")
+        logger.warning(
+            f"New version {latest_version} is available. Please update to the latest version."
+        )
         logger.warning(f"You can download the latest version from WebUI")
+
 
 # 注册信号处理函数
 def _signal_handler(*args):
@@ -58,9 +72,13 @@ def _signal_handler(*args):
             logger.warning("Interrupt signal received. Stopping application...")
             shutdown_event.set()
     elif _interrupt_count == 2:
-        logger.warning("Interrupt signal received again. Press Ctrl+C one more time to force shutdown...")
+        logger.warning(
+            "Interrupt signal received again. Press Ctrl+C one more time to force shutdown..."
+        )
     else:
-        logger.warning("Interrupt signal received for the third time. Forcing shutdown...")
+        logger.warning(
+            "Interrupt signal received for the third time. Forcing shutdown..."
+        )
         os._exit(1)
 
 
@@ -87,11 +105,13 @@ def init_memory_system(container: DependencyContainer):
     container.register(MemoryManager, memory_manager)
     return memory_manager
 
+
 def init_media_carrier(container: DependencyContainer):
     """初始化媒体载体"""
     # 注册记忆管理器作为媒体引用提供者
     carrier_registry = container.resolve(MediaCarrierRegistry)
     carrier_registry.register("memory", container.resolve(MemoryManager))
+
 
 def init_tracing_system(container: DependencyContainer):
     """初始化追踪系统"""
@@ -111,6 +131,96 @@ def init_tracing_system(container: DependencyContainer):
 
     logger.info("Tracing system initialized")
     return tracing_manager
+
+
+def auto_discover_mcp_servers(config: GlobalConfig) -> GlobalConfig:
+    """自动发现 mcp_servers 目录中的 MCP 服务器"""
+    mcp_servers_dir = Path("mcp_servers")
+
+    if not mcp_servers_dir.exists():
+        logger.info("mcp_servers 目录不存在，跳过自动发现")
+        return config
+
+    logger.info(f"开始自动发现 mcp_servers 目录中的 MCP 服务器...")
+
+    # 获取所有 Python 文件
+    server_files = list(mcp_servers_dir.glob("*.py"))
+
+    if not server_files:
+        logger.info("mcp_servers 目录中没有找到 Python 文件")
+        return config
+
+    # 获取已配置的服务器信息：ID和脚本路径
+    configured_scripts = {}  # {脚本文件名: 服务器ID}
+    configured_server_ids = set()
+
+    for server in config.mcp.servers:
+        configured_server_ids.add(server.id)
+        # 提取脚本路径
+        if server.args:
+            for arg in server.args:
+                if arg.endswith(".py") or "/" in arg or "\\" in arg:
+                    script_name = Path(arg).name
+                    configured_scripts[script_name] = server.id
+                    logger.debug(f"已配置服务器: {server.id}, 脚本: {script_name}")
+                    break
+
+    for server_file in server_files:
+        # 跳过 __init__.py 和 __pycache__ 等
+        if server_file.name.startswith("_"):
+            continue
+
+        # 检查脚本是否已经被配置
+        if server_file.name in configured_scripts:
+            configured_id = configured_scripts[server_file.name]
+            logger.info(
+                f"MCP 服务器脚本 '{server_file.name}' "
+                f"已在配置文件中配置为 '{configured_id}'，跳过自动配置"
+            )
+            continue
+
+        # 生成服务器 ID（使用文件名，去掉 .py 后缀）
+        server_id = server_file.stem
+
+        # 如果服务器ID已经被使用，也跳过
+        if server_id in configured_server_ids:
+            logger.info(f"MCP 服务器ID '{server_id}' 已被使用，跳过自动配置")
+            continue
+
+        # 判断是否为独立运行的脚本
+        is_standalone = "standalone" in server_id.lower()
+
+        if is_standalone:
+            # 独立脚本直接运行
+            server_config = MCPServerConfig(
+                id=server_id,
+                description=f"自动发现的独立 MCP 服务器: {server_file.name}",
+                command="python",
+                args=[str(server_file)],
+                env={},
+                connection_type="stdio",
+                enable=True,
+            )
+        else:
+            # 模块方式运行
+            module_name = f"mcp_servers.{server_id}"
+            server_config = MCPServerConfig(
+                id=server_id,
+                description=f"自动发现的 MCP 服务器模块: {server_file.name}",
+                command="python",
+                args=["-m", module_name],
+                env={},
+                connection_type="stdio",
+                enable=True,
+            )
+
+        # 添加到配置中
+        config.mcp.servers.append(server_config)
+        logger.info(f"自动发现并添加 MCP 服务器: {server_id} ({server_file.name})")
+
+    logger.info(f"自动发现完成，共发现 {len(server_files)} 个 MCP 服务器文件")
+    return config
+
 
 def init_application() -> DependencyContainer:
     """初始化应用程序"""
@@ -136,6 +246,9 @@ def init_application() -> DependencyContainer:
         )
         config = GlobalConfig()
 
+    # 自动发现 mcp_servers 目录中的 MCP 服务器
+    config = auto_discover_mcp_servers(config)
+
     # 设置时区
     os.environ["TZ"] = config.system.timezone
     if hasattr(time, "tzset"):
@@ -157,7 +270,9 @@ def init_application() -> DependencyContainer:
     media_manager = MediaManager()
     container.register(MediaManager, media_manager)
     container.register(MediaCarrierRegistry, MediaCarrierRegistry(container))
-    container.register(MediaCarrierService, MediaCarrierService(container, media_manager))
+    container.register(
+        MediaCarrierService, MediaCarrierService(container, media_manager)
+    )
 
     # 注册工作流注册表
     workflow_registry = WorkflowRegistry(container)
@@ -175,14 +290,16 @@ def init_application() -> DependencyContainer:
 
     llm_manager = LLMManager(container)
     container.register(LLMManager, llm_manager)
-    plugin_loader = PluginLoader(container, os.path.join(os.path.dirname(__file__), "plugins"))
+    plugin_loader = PluginLoader(
+        container, os.path.join(os.path.dirname(__file__), "plugins")
+    )
     container.register(PluginLoader, plugin_loader)
 
     workflow_dispatcher = WorkflowDispatcher(container)
     container.register(WorkflowDispatcher, workflow_dispatcher)
 
     container.register(WebServer, WebServer(container))
-    
+
     mcp_manager = MCPServerManager(container)
     container.register(MCPServerManager, mcp_manager)
 
@@ -218,13 +335,14 @@ def init_application() -> DependencyContainer:
     llm_manager = container.resolve(LLMManager)
     logger.info("Loading LLMs")
     llm_manager.load_config()
-    
+
     # 加载MCP服务器
     mcp_manager = container.resolve(MCPServerManager)
     logger.info("Loading MCP servers")
     mcp_manager.load_servers()
 
     return container
+
 
 def run_application(container: DependencyContainer):
     """运行应用程序"""
@@ -243,7 +361,7 @@ def run_application(container: DependencyContainer):
     logger.info("Starting adapters")
     im_manager = container.resolve(IMManager)
     im_manager.start_adapters(loop=loop)
-    
+
     # 加载MCP服务器
     mcp_manager = container.resolve(MCPServerManager)
     logger.info("Connecting to MCP servers")
