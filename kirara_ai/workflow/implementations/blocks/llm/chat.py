@@ -10,10 +10,15 @@ import httpx
 from kirara_ai.im.message import ImageMessage, IMMessage, MessageElement, TextMessage
 from kirara_ai.im.sender import ChatSender
 from kirara_ai.ioc.container import DependencyContainer
-from kirara_ai.llm.format import LLMChatMessage, LLMChatTextContent
+from kirara_ai.llm.format import (
+    LLMChatMessage,
+    LLMChatTextContent,
+    LLMToolResultContent,
+)
 from kirara_ai.llm.format.message import LLMChatContentPartType, LLMChatImageContent
 from kirara_ai.llm.format.request import LLMChatRequest, Tool
 from kirara_ai.llm.format.response import LLMChatResponse
+from kirara_ai.llm.format.tool import MediaContent
 from kirara_ai.llm.llm_manager import LLMManager
 from kirara_ai.llm.model_types import LLMAbility, ModelType
 from kirara_ai.logger import get_logger
@@ -278,12 +283,25 @@ class ChatResponseConverter(Block):
     def execute(self, resp: LLMChatResponse) -> Dict[str, Any]:
         message_elements: List[MessageElement] = []
 
+        # 定义工具调用提示的正则表达式模式
+        # 匹配类似：（调用绘图工具）、(调用xxx工具)、(call xxx tool)等文本
+        tool_call_pattern = re.compile(
+            r"（[^）]*?(?:调用|call)[^）]*?(?:工具|tool).*?）|\([^)]*?(?:调用|call)[^)]*?(?:tool|工具).*?\)",
+            re.MULTILINE | re.DOTALL,
+        )
+
         for part in resp.message.content:
             if isinstance(part, LLMChatTextContent):
+                # 过滤掉工具调用提示文本
+                filtered_text = tool_call_pattern.sub("", part.text)
+
                 # 通过 <break> 将回答分为不同的 TextMessage
-                for element in part.text.split("<break>"):
+                for element in filtered_text.split("<break>"):
                     if element.strip():
-                        message_elements.append(TextMessage(element.strip()))
+                        # 清理多余的空白行
+                        cleaned_text = re.sub(r"\n\s*\n\s*\n", "\n\n", element.strip())
+                        if cleaned_text:
+                            message_elements.append(TextMessage(cleaned_text))
             elif isinstance(part, LLMChatImageContent):
                 message_elements.append(ImageMessage(media_id=part.media_id))
         msg = IMMessage(
@@ -359,17 +377,12 @@ class ChatCompletionWithTools(Block):
         iteration_msgs: List[LLMChatMessage] = []
         iter_count = 0
         while iter_count < self.max_iterations:
-            # 在这里指定llm的model
-            self.logger.debug(f"Iteration {iter_count + 1} of {self.max_iterations}")
             request_body = LLMChatRequest(
                 messages=msg + iteration_msgs, model=self.model_name
             )
             if tools is not None and len(tools) > 0:
                 request_body.tools = tools
-
-            # 最后一次迭代不调用工具
-            if iter_count == self.max_iterations - 1:
-                request_body.tool_choice = "none"
+                request_body.tool_choice = "auto"
 
             tools_mapping = {t.name: t for t in tools}
 
@@ -377,13 +390,9 @@ class ChatCompletionWithTools(Block):
             iter_count += 1
             if response.message.tool_calls:
                 iteration_msgs.append(response.message)
-                self.logger.debug("Tool calls found, attempt to invoke tools")
                 for tool_call in response.message.tool_calls:
                     actual_tool = tools_mapping.get(tool_call.function.name)
                     if actual_tool:
-                        self.logger.debug(
-                            f"Invoking tool: {actual_tool.name}({tool_call.function.arguments})"
-                        )
                         try:
                             resp_future = asyncio.run_coroutine_threadsafe(
                                 actual_tool.invokeFunc(tool_call), loop
@@ -405,7 +414,46 @@ class ChatCompletionWithTools(Block):
                             )
                             iteration_msgs.append(tool_result_msg)
             else:
-                self.logger.debug("No tool calls found, return response directly")
+                self._append_tool_images_to_response(iteration_msgs, response)
                 return {"resp": response, "iteration_msgs": iteration_msgs}
 
+        # 最后一次迭代结束，检查并添加工具返回的图片
+        self._append_tool_images_to_response(iteration_msgs, response)
         return {"resp": response, "iteration_msgs": iteration_msgs}
+
+    def _append_tool_images_to_response(
+        self, iteration_msgs: List[LLMChatMessage], response: LLMChatResponse
+    ):
+        """将工具返回的图片自动添加到响应中"""
+        # 收集所有工具返回的图片
+        image_media_ids = []
+        for msg in iteration_msgs:
+            if msg.role == "tool":
+                for tool_result in msg.content:
+                    for media_content in tool_result.content:
+                        if isinstance(media_content, MediaContent):
+                            self.logger.info(
+                                f"[TOOL_IMAGES] 找到图片: media_id={media_content.media_id}"
+                            )
+                            image_media_ids.append(media_content.media_id)
+
+        # DEBUG: 记录找到的图片数量
+        self.logger.info(
+            f"[TOOL_IMAGES] 共找到 {len(image_media_ids)} 张图片: {image_media_ids}"
+        )
+
+        # 如果找到图片，添加到响应中
+        if image_media_ids:
+            self.logger.info(
+                f"Adding {len(image_media_ids)} tool-generated images to response"
+            )
+            new_content = list(response.message.content)
+            for media_id in image_media_ids:
+                if not any(
+                    isinstance(c, LLMChatImageContent) and c.media_id == media_id
+                    for c in new_content
+                ):
+                    new_content.append(LLMChatImageContent(media_id=media_id))
+            response.message.content = new_content
+        else:
+            self.logger.warning("[TOOL_IMAGES] 未找到任何工具返回的图片")
