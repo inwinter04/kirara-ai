@@ -4,7 +4,7 @@ import time
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from kirara_ai.im.adapter import IMAdapter, UserProfileAdapter
-from kirara_ai.im.message import IMMessage, TextMessage
+from kirara_ai.im.message import IMMessage, TextMessage, ImageMessage
 from kirara_ai.im.sender import ChatSender
 from kirara_ai.im.profile import UserProfile
 from kirara_ai.logger import get_logger
@@ -130,7 +130,33 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
         text_messages = [
             elem for elem in message.message_elements if isinstance(elem, TextMessage)
         ]
-        logger.info(f"[SEND_MESSAGE] 收集到 {len(text_messages)} 个文本消息")
+
+        # 2.5. 收集图片消息
+        image_messages = [
+            elem for elem in message.message_elements if isinstance(elem, ImageMessage)
+        ]
+
+        # 2.6. 验证约束条件
+        if len(image_messages) > 9:
+            logger.error(
+                f"[SEND_MESSAGE] 图片数量超限（{len(image_messages)} > 9），取消发送"
+            )
+            return
+
+        # 2.7. 如果有图片但没有文本，使用默认文本
+        default_texts = [
+            "我画好啦[吐舌]",
+            "给你画了一个[酷]",
+            "画好了呀[星星月亮]",
+            "这是我的作品[疑问]",
+            "看看怎么样呀[吐舌]",
+        ]
+        if image_messages and not text_messages:
+            default_text = random.choice(default_texts)
+            text_messages = [default_text]
+            logger.info(
+                f"[SEND_MESSAGE] 有图片但没有文本，使用默认文本: {default_text}"
+            )
 
         # 3. 处理消息数量，确保最多2条
         if len(text_messages) >= 3:
@@ -169,11 +195,41 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
             logger.warning("[SEND_MESSAGE] 没有文本消息")
             return
 
+        # 3.5. 上传图片（如果有）
+        image_fids = []
+        if image_messages:
+            logger.info(f"[SEND_MESSAGE] 开始上传 {len(image_messages)} 张图片")
+            for idx, img_msg in enumerate(image_messages):
+                try:
+                    logger.info(
+                        f"[SEND_MESSAGE] 上传第 {idx + 1}/{len(image_messages)} 张图片"
+                    )
+                    img_data = await img_msg.get_data()
+                    filename = img_msg.path if img_msg.path else f"image_{idx}.jpg"
+                    fid = await self.api_client.upload_image(
+                        _key=self._key, image_data=img_data, filename=filename
+                    )
+                    image_fids.append(fid)
+                    logger.info(
+                        f"[SEND_MESSAGE] 第 {idx + 1} 张图片上传成功: fid={fid}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[SEND_MESSAGE] 第 {idx + 1} 张图片上传失败: {e}，跳过该图片"
+                    )
+                    # 继续上传下一张图片
+
+            if not image_fids:
+                logger.warning("[SEND_MESSAGE] 所有图片上传失败，将发送纯文本评论")
+            else:
+                logger.info(
+                    f"[SEND_MESSAGE] 成功上传 {len(image_fids)}/{len(image_messages)} 张图片"
+                )
+
         # 4. 根据消息数量决定如何处理
         if len(text_messages) == 1:
             # 只有1条文本，可以分割成最多2条
             text = text_messages[0]
-            logger.info(f"[SEND_MESSAGE] 处理单条消息: {text[:50]}...")
 
             # 5. 敏感词过滤
             if self.config.sensitive_words:
@@ -186,19 +242,16 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
 
             # 6. 处理消息分割：检测\n\n数量
             double_newline_count = text.count("\n\n")
-            logger.info(f"[SEND_MESSAGE] 检测到 {double_newline_count} 个 \\n\\n")
 
             if double_newline_count >= 2:
                 # 有2个及以上\n\n，需要分割成两条消息发送
                 # 先将所有\n\n替换为\n
                 normalized_text = text.replace("\n\n", "\n")
-                logger.info(f"[SEND_MESSAGE] 已将所有\\n\\n替换为\\n")
 
                 # 找到所有\n的位置
                 newline_positions = [
                     i for i, char in enumerate(normalized_text) if char == "\n"
                 ]
-                logger.info(f"[SEND_MESSAGE] 找到 {len(newline_positions)} 个换行符")
 
                 # 在中间位置分割，确保两部分都不为空
                 split_pos = newline_positions[len(newline_positions) // 2]
@@ -220,9 +273,6 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                             text_part1 = part1
                             text_part2 = part2
                             found_valid_split = True
-                            logger.info(
-                                f"[SEND_MESSAGE] 找到有效分割点：位置={split_pos}, 第1部分={len(text_part1)}字, 第2部分={len(text_part2)}字"
-                            )
                             break
 
                     if not found_valid_split:
@@ -234,13 +284,12 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                             f"[SEND_MESSAGE] 所有分割点都会产生空字符串，使用第一个分割点：第1部分={len(text_part1)}字, 第2部分={len(text_part2)}字"
                         )
 
-                logger.info(
-                    f"[SEND_MESSAGE] 分割消息：第1部分='{text_part1[:50]}...', 第2部分='{text_part2[:50]}...'"
-                )
-
                 try:
-                    # 发送第一条消息
-                    await self._send_single_comment(text_part1, post_id, comment_id)
+                    # 发送第一条消息（带图片）
+                    images_param = ",".join(image_fids) if image_fids else ""
+                    await self._send_single_comment(
+                        text_part1, post_id, comment_id, images_param
+                    )
                 except Exception as e:
                     logger.error(f"[SEND_MESSAGE] 第1部分发送失败: {e}")
                     raise
@@ -249,8 +298,8 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                     # 等待回复间隔
                     await self._wait_for_comment_delay()
 
-                    # 发送第二条消息
-                    await self._send_single_comment(text_part2, post_id, comment_id)
+                    # 发送第二条消息（不带图片）
+                    await self._send_single_comment(text_part2, post_id, comment_id, "")
                 except Exception as e:
                     logger.error(
                         f"[SEND_MESSAGE] 第2部分发送失败（第1部分已发送）: {e}"
@@ -259,16 +308,16 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
             else:
                 # 正常处理：替换\n\n为\n
                 text = text.replace("\n\n", "\n")
-                logger.info(f"[SEND_MESSAGE] 已将所有\\n\\n替换为\\n")
 
-                # 7. 发送单条评论
-                await self._send_single_comment(text, post_id, comment_id)
+                # 7. 发送单条评论（带图片）
+                images_param = ",".join(image_fids) if image_fids else ""
+                await self._send_single_comment(text, post_id, comment_id, images_param)
 
         elif len(text_messages) == 2:
             # 有2条文本，直接发送，不再分割
             for idx, text in enumerate(text_messages):
-                logger.info(
-                    f"[SEND_MESSAGE] 处理第 {idx + 1}/{len(text_messages)} 条消息: {text[:50]}..."
+                logger.debug(
+                    f"[SEND_MESSAGE] 处理第 {idx + 1}/{len(text_messages)} 条消息"
                 )
 
                 # 5. 敏感词过滤
@@ -282,20 +331,21 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
 
                 # 6. 替换\n\n为\n，不分割
                 text = text.replace("\n\n", "\n")
-                logger.info(f"[SEND_MESSAGE] 已将所有\\n\\n替换为\\n")
 
                 # 如果不是第一条，等待回复间隔
                 if idx > 0:
                     await self._wait_for_comment_delay()
 
-                # 7. 发送单条评论
-                await self._send_single_comment(text, post_id, comment_id)
+                # 7. 发送单条评论（仅在第一条带图片）
+                images_param = ",".join(image_fids) if image_fids and idx == 0 else ""
+                await self._send_single_comment(text, post_id, comment_id, images_param)
 
         # 9. 更新最后发送时间
         self._last_send_time = time.time()
-        logger.info(f"[SEND_MESSAGE] 消息发送流程完成，已更新最后发送时间")
 
-    async def _send_single_comment(self, text: str, post_id: str, comment_id: int):
+    async def _send_single_comment(
+        self, text: str, post_id: str, comment_id: int, images: str = ""
+    ):
         """
         发送单条评论（内部方法，不包含延迟逻辑，延迟由调用方控制）
 
@@ -303,14 +353,15 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
             text: 评论内容
             post_id: 帖子ID
             comment_id: 评论ID
+            images: 图片 fid 列表（逗号分隔），仅在第一条消息时传递
         """
         # 检查字数，少于5个字则填充"."
         original_length = len(text)
         if original_length < 5:
             fill_count = 5 - original_length
             text = text + ("." * fill_count)
-            logger.info(
-                f"[SEND_SINGLE_COMMENT] 字数不足5个，已填充 {fill_count} 个 '.': '{text}'"
+            logger.debug(
+                f"[SEND_SINGLE_COMMENT] 字数不足5个，已填充 {fill_count} 个 '.'"
             )
 
         # 发送评论（最多重试3次）
@@ -320,7 +371,7 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
         for retry_count in range(max_retries):
             try:
                 logger.info(
-                    f"[SEND_SINGLE_COMMENT] 准备发送评论: retry={retry_count + 1}/{max_retries}, text={text}, post_id={post_id}, comment_id={comment_id}"
+                    f"[SEND_SINGLE_COMMENT] 准备发送评论: retry={retry_count + 1}/{max_retries}, text={text}, post_id={post_id}, comment_id={comment_id}, images={images}"
                 )
 
                 # 调用 API 创建评论
@@ -330,10 +381,7 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                     post_id=post_id,
                     comment_id=comment_id,
                     text=text,
-                )
-
-                logger.info(
-                    f"[SEND_SINGLE_COMMENT] API响应: code={response.get('code')}, msg={response.get('msg')}, status={response.get('status')}, 完整响应={response}"
+                    images=images,
                 )
 
                 # 检查响应状态
@@ -373,9 +421,14 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                             "[SEND_SINGLE_COMMENT] 重复评论重试次数已用尽，放弃发送"
                         )
                         raise Exception("评论发送失败：重复评论")
-
                 else:
-                    logger.info(f"[SEND_SINGLE_COMMENT] 评论发送成功: {text[:50]}...")
+                    # 评论发送成功，打印响应信息
+                    response_code = response.get("code")
+                    response_status = response.get("status")
+                    comment_id = response.get("commentID")
+                    logger.info(
+                        f"[SEND_SINGLE_COMMENT] 评论响应: code={response_code}, status={response_status}, comment_id={comment_id}, msg={response_text}"
+                    )
                     break
 
             except Exception as e:
@@ -804,9 +857,6 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                     self._save_last_processed_time(max_processed_time)
                     # 保存到数据库
                     self._save_last_time_to_db(max_processed_time)
-                    logger.info(
-                        f"[POLLING] 批量处理完成，更新最后处理时间: {last_time} -> {max_processed_time}, 将保存到数据库"
-                    )
 
                 # 6. 等待下一次轮询
                 await asyncio.sleep(self.config.poll_interval)
@@ -889,10 +939,6 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
             state.updated_at = datetime.now()
 
             session.commit()
-
-            logger.info(
-                f"[DB_SAVE] 时间戳已保存到数据库: timestamp_ms={timestamp_ms}, DateTime={datetime.fromtimestamp(timestamp_ms / 1000)}, adapter_name={self.adapter_name}"
-            )
         except Exception as e:
             logger.error(f"[DB_SAVE] 保存时间戳到数据库失败: {e}")
             import traceback

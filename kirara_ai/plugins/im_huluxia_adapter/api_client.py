@@ -1,5 +1,7 @@
 import aiohttp
 import hashlib
+import time
+import random
 from typing import Dict, Any, Optional
 from kirara_ai.logger import get_logger
 from .models import HuluxiaUserInfo
@@ -317,8 +319,136 @@ class HuluxiaApiClient:
             logger.error(f"获取消息列表异常: {e}")
             raise
 
+    def _generate_upload_sign(self, _key: str, nonce_str: str, timestamp: int) -> str:
+        """
+        生成图片上传请求签名
+
+        Args:
+            _key: 用户认证密钥
+            nonce_str: 随机32位字符串
+            timestamp: 时间戳（毫秒）
+
+        Returns:
+            MD5签名字符串（大写）
+        """
+        # 按照文档格式：参数名=值&参数名=值...&secret=密钥
+        sign_string = (
+            f"_key={_key}"
+            f"&app_version=4.3.0.2"
+            f"&device_code=[d]{self.device_code}"
+            f"&gkey=000000"
+            f"&market_id=floor_web"
+            f"&nonce_str={nonce_str}"
+            f"&platform=2"
+            f"&timestamp={timestamp}"
+            f"&use_type=2"
+            f"&versioncode=20141492"
+            f"&secret=my_sign@huluxia.com"
+        )
+
+        sign = hashlib.md5(sign_string.encode("utf-8")).hexdigest().upper()
+
+        return sign
+
+    async def upload_image(self, _key: str, image_data: bytes, filename: str) -> str:
+        """
+        上传图片到葫芦侠服务器
+
+        Args:
+            _key: 用户认证密钥
+            image_data: 图片二进制数据
+            filename: 文件名
+
+        Returns:
+            图片 fid
+
+        Raises:
+            Exception: 上传失败时抛出
+        """
+        # 1. 生成必要的参数
+        timestamp = int(time.time() * 1000)
+        nonce_str = self._generate_nonce_str()
+        sign = self._generate_upload_sign(_key, nonce_str, timestamp)
+
+        # 2. 构造URL参数
+        device_code_encoded = f"%5Bd%5D{self.device_code}"
+        url = (
+            f"http://upload.huluxia.com/upload/v3/image"
+            f"?platform=2"
+            f"&gkey=000000"
+            f"&app_version=4.3.0.2"
+            f"&versioncode=20141492"
+            f"&market_id=floor_web"
+            f"&_key={_key}"
+            f"&device_code={device_code_encoded}"
+            f"&use_type=2"
+            f"&sign={sign}"
+            f"&timestamp={timestamp}"
+            f"&nonce_str={nonce_str}"
+        )
+
+        # 3. 构造multipart/form-data请求
+        headers = {
+            "User-Agent": "okhttp/3.8.1",
+        }
+
+        # 4. 构造表单数据
+        data = aiohttp.FormData()
+        data.add_field(
+            "file",
+            image_data,
+            filename=filename,
+            content_type=self._guess_content_type(filename),
+        )
+
+        try:
+            if not self.session:
+                raise Exception("HTTP session 未初始化")
+
+            async with self.session.post(url, data=data, headers=headers) as response:
+                response_text = await response.text()
+                response_data = await self._safe_json_parse(response, response_text)
+
+                # 提取 fid
+                if "fid" in response_data:
+                    fid = response_data["fid"]
+                    logger.info(f"[UPLOAD_IMAGE] 图片上传成功: fid={fid}")
+                    return fid
+                else:
+                    msg = response_data.get("msg", "未知错误")
+                    logger.error(f"[UPLOAD_IMAGE] 图片上传失败：{msg}")
+                    raise Exception(f"图片上传失败：{msg}")
+
+        except aiohttp.ClientError as e:
+            logger.error(f"[UPLOAD_IMAGE] 网络请求错误: {e}")
+            raise Exception(f"网络请求错误: {e}")
+        except Exception as e:
+            logger.error(f"[UPLOAD_IMAGE] 上传异常: {e}")
+            raise
+
+    def _generate_nonce_str(self) -> str:
+        """生成随机32位字符串"""
+        chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        return "".join(random.choice(chars) for _ in range(32))
+
+    def _guess_content_type(self, filename: str) -> str:
+        """根据文件名猜测Content-Type"""
+        if "." not in filename:
+            return "application/octet-stream"
+
+        extension = filename.split(".")[-1].lower()
+        content_types = {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "webp": "image/webp",
+            "bmp": "image/bmp",
+        }
+        return content_types.get(extension, "application/octet-stream")
+
     def _generate_comment_sign(
-        self, _key: str, post_id: str, text: str, comment_id: int = 0
+        self, _key: str, post_id: str, text: str, comment_id: int = 0, images: str = ""
     ) -> str:
         """
         生成评论请求签名
@@ -328,26 +458,30 @@ class HuluxiaApiClient:
             post_id: 帖子ID
             text: 评论内容
             comment_id: 评论ID，新评论为0
+            images: 图片 fid 列表（逗号分隔）
 
         Returns:
             MD5签名字符串（大写）
         """
+        # 注意：根据文档，评论签名中 device_code 的值应该是空字符串
         params = {
             "_key": _key,
             "comment_id": str(comment_id),
-            "device_code": "",
-            "images": "",
+            "device_code": "",  # 评论签名中 device_code 为空
+            "images": images,
             "post_id": post_id,
             "text": text,
         }
 
         # 按 key 升序排序并拼接
-        sign_string = "".join([f"{k}{v}" for k, v in sorted(params.items())])
+        sorted_params = sorted(params.items())
+        sign_string_without_key = "".join([f"{k}{v}" for k, v in sorted_params])
 
         # 追加密钥并计算 MD5
-        sign_string += "fa1c28a5b62e79c3e63d9030b6142e4b"
+        sign_string = sign_string_without_key + "fa1c28a5b62e79c3e63d9030b6142e4b"
+        sign = hashlib.md5(sign_string.encode("utf-8")).hexdigest().upper()
 
-        return hashlib.md5(sign_string.encode("utf-8")).hexdigest().upper()
+        return sign
 
     async def create_comment(
         self,
@@ -356,6 +490,7 @@ class HuluxiaApiClient:
         post_id: int,
         text: str,
         comment_id: int = 0,
+        images: str = "",
     ) -> Dict[str, Any]:
         """
         创建评论（发送消息）
@@ -366,6 +501,7 @@ class HuluxiaApiClient:
             post_id: 帖子ID
             text: 评论内容
             comment_id: 评论ID，新评论为0
+            images: 图片 fid 列表（逗号分隔）
 
         Returns:
             API响应的字典
@@ -374,7 +510,7 @@ class HuluxiaApiClient:
             Exception: 请求失败时抛出
         """
         # 1. 生成签名
-        sign = self._generate_comment_sign(_key, str(post_id), text, comment_id)
+        sign = self._generate_comment_sign(_key, str(post_id), text, comment_id, images)
 
         # 2. 构造 URL 参数
         url = (
@@ -393,7 +529,7 @@ class HuluxiaApiClient:
             "comment_id": comment_id,
             "text": text,
             "patcha": "",
-            "images": "",
+            "images": images,
             "remindUsers": "",
             "sign": sign,
         }
@@ -409,17 +545,9 @@ class HuluxiaApiClient:
             if not self.session:
                 raise Exception("HTTP session 未初始化")
 
-            logger.debug(
-                f"[API_CLIENT] 创建评论请求数据: post_id={post_id}, comment_id={comment_id}, text={text[:50] if text else ''}..., sign={sign}"
-            )
-
             async with self.session.post(url, data=data, headers=headers) as response:
                 response_text = await response.text()
                 response_data = await self._safe_json_parse(response, response_text)
-
-                logger.debug(
-                    f"[API_CLIENT] 创建评论响应: status={response.status}, response_text={response_text[:200] if response_text else ''}"
-                )
 
                 return response_data
 
