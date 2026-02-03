@@ -6,6 +6,108 @@ from sqlalchemy import Column, String, Integer, DateTime, Text
 from kirara_ai.database import Base
 
 
+# ===== 热度功能配置 =====
+class HuluxiaHeatSchedule(BaseModel):
+    """单次热度任务配置"""
+
+    model_config = ConfigDict(
+        extra="allow", json_schema_extra={"title": "热度任务计划"}
+    )
+
+    time: str = Field(
+        title="执行时间",
+        description="执行时间，格式 HH:MM，如 08:00",
+        pattern=r"^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
+        json_schema_extra={
+            "placeholder": "08:00",
+            "examples": ["08:00", "12:00", "20:00"],
+        },
+    )
+    cat_ids: List[int] = Field(
+        title="板块ID列表",
+        description="要增加热度的板块ID列表，如 [92, 96]",
+    )
+    request_count: int = Field(
+        title="请求次数",
+        description="每个板块的请求次数",
+        ge=1,
+        le=10000,
+        default=50,
+        json_schema_extra={"examples": [50, 100]},
+    )
+
+    @field_validator("time")
+    @classmethod
+    def validate_time(cls, v: str) -> str:
+        """验证时间格式"""
+        if not v:
+            raise ValueError("时间不能为空")
+        v = v.strip()
+        try:
+            hour, minute = map(int, v.split(":"))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError("时间格式错误，小时应在0-23之间，分钟应在0-59之间")
+            return f"{hour:02d}:{minute:02d}"
+        except Exception:
+            raise ValueError("时间格式错误，应为 HH:MM 格式，如 08:00")
+
+    def __repr__(self):
+        return f"<HuluxiaHeatSchedule time={self.time}, cat_ids={self.cat_ids}, count={self.request_count}>"
+
+
+class HuluxiaHeatConfig(BaseModel):
+    """热度功能配置"""
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "title": "热度功能",
+            "description": "定时增加葫芦侠板块热度的功能配置",
+        },
+    )
+
+    enable: bool = Field(
+        title="启用热度功能",
+        description="是否启用定时热度功能（当板块ID为0时该功能自动禁用）",
+        default=False,
+        json_schema_extra={"widget": "switch"},
+    )
+    schedules: List[HuluxiaHeatSchedule] = Field(
+        title="执行计划",
+        description="热度任务执行时间表，可以配置多个时间点",
+        default=[],
+        json_schema_extra={
+            "widget": "array",
+            "item_title": "计划",
+            "examples": [[{"time": "08:00", "cat_ids": [92, 96], "request_count": 50}]],
+        },
+    )
+    delay_min_ms: int = Field(
+        title="最小延迟（毫秒）",
+        description="两次请求之间的最小延迟时间（毫秒）",
+        ge=50,
+        le=5000,
+        default=200,
+        json_schema_extra={"examples": [200]},
+    )
+    delay_max_ms: int = Field(
+        title="最大延迟（毫秒）",
+        description="两次请求之间的最大延迟时间（毫秒）",
+        ge=50,
+        le=5000,
+        default=300,
+        json_schema_extra={"examples": [300]},
+    )
+
+    def __repr__(self):
+        return (
+            f"<HuluxiaHeatConfig enable={self.enable}, schedules={len(self.schedules)}>"
+        )
+
+
+# ===== 葫芦侠适配器配置 =====
+
+
 class HuluxiaConfig(BaseModel):
     """
     葫芦侠适配器配置
@@ -16,7 +118,9 @@ class HuluxiaConfig(BaseModel):
     # ===== 基础配置 =====
     account: str = Field(title="账号", description="葫芦侠账号")
 
-    password: str = Field(title="密码", description="葫芦侠密码")
+    password: str = Field(
+        title="密码", description="葫芦侠密码", json_schema_extra={"widget": "password"}
+    )
 
     # ===== 设备配置（内部使用，不暴露给用户）=====
     _device_code: Optional[str] = None
@@ -55,9 +159,10 @@ class HuluxiaConfig(BaseModel):
     )
 
     key_check_time: str = Field(
-        title="每日检查key有效时间",
-        description="每天定时检查登录key有效性的时间，格式为 HH:MM，如 03:00",
+        title="每日检查登录有效期",
+        description="每天定时检查登录有效性的时间，格式为 HH:MM，如 03:00",
         default="03:00",
+        json_schema_extra={"widget": "text"},
     )
 
     # ===== 消息发送配置 =====
@@ -76,6 +181,52 @@ class HuluxiaConfig(BaseModel):
         json_schema_extra={"widget": "textarea"},
     )
 
+    # ===== 热度功能配置 =====
+    heat_enable: bool = Field(
+        title="启用热度功能",
+        description="是否启用定时热度功能（当板块ID为0时该功能自动禁用）",
+        default=False,
+        json_schema_extra={"widget": "switch"},
+    )
+
+    heat_board_ids: str = Field(
+        title="指定板块ID",
+        description="要增加热度的板块ID，多个用逗号分隔（如：92,96）",
+        default="92,96",
+        json_schema_extra={"placeholder": "92,96"},
+    )
+
+    heat_time: str = Field(
+        title="执行时间",
+        description="每天执行热度任务的时间（格式：HH:MM，如：08:00）",
+        default="05:00",
+        json_schema_extra={"placeholder": "08:00"},
+    )
+
+    heat_count: int = Field(
+        title="每个板块请求次数",
+        description="每个板块发送的请求次数",
+        ge=1,
+        le=10000,
+        default=2500,
+    )
+
+    heat_delay_min_ms: int = Field(
+        title="最小延迟（毫秒）",
+        description="两次请求之间的最小延迟时间",
+        ge=50,
+        le=5000,
+        default=300,
+    )
+
+    heat_delay_max_ms: int = Field(
+        title="最大延迟（毫秒）",
+        description="两次请求之间的最大延迟时间",
+        ge=50,
+        le=5000,
+        default=500,
+    )
+
     def __init__(self, **data):
         device_code_from_data = data.pop("device_code", None)
         super().__init__(**data)
@@ -83,10 +234,63 @@ class HuluxiaConfig(BaseModel):
             object.__setattr__(self, "_device_code", device_code_from_data)
         if not self._device_code or len(self._device_code.strip()) == 0:
             object.__setattr__(self, "_device_code", str(uuid.uuid4()))
+        object.__setattr__(self, "_cached_heat_config", None)
 
     @property
     def device_code(self) -> str:
         return self._device_code
+
+    @property
+    def heat(self) -> HuluxiaHeatConfig:
+        """从扁平化字段构造HuluxiaHeatConfig对象（带缓存）"""
+        if self._cached_heat_config is not None:
+            return self._cached_heat_config
+
+        # 如果没有启用，返回空配置
+        if not self.heat_enable:
+            config = HuluxiaHeatConfig(
+                enable=False,
+                schedules=[],
+                delay_min_ms=self.heat_delay_min_ms,
+                delay_max_ms=self.heat_delay_max_ms,
+            )
+            object.__setattr__(self, "_cached_heat_config", config)
+            return config
+
+        # 解析板块ID字符串
+        cat_ids = []
+        if self.heat_board_ids and self.heat_board_ids.strip():
+            try:
+                cat_ids = [
+                    int(x.strip()) for x in self.heat_board_ids.split(",") if x.strip()
+                ]
+            except ValueError:
+                pass
+
+        # 如果没有有效的板块ID，返回空配置
+        if not cat_ids:
+            config = HuluxiaHeatConfig(
+                enable=False,
+                schedules=[],
+                delay_min_ms=self.heat_delay_min_ms,
+                delay_max_ms=self.heat_delay_max_ms,
+            )
+            object.__setattr__(self, "_cached_heat_config", config)
+            return config
+
+        # 构造schedule
+        schedule = HuluxiaHeatSchedule(
+            time=self.heat_time, cat_ids=cat_ids, request_count=self.heat_count
+        )
+
+        config = HuluxiaHeatConfig(
+            enable=self.heat_enable,
+            schedules=[schedule],
+            delay_min_ms=self.heat_delay_min_ms,
+            delay_max_ms=self.heat_delay_max_ms,
+        )
+        object.__setattr__(self, "_cached_heat_config", config)
+        return config
 
     def model_dump(self, **kwargs):
         data = super().model_dump(**kwargs)

@@ -13,6 +13,8 @@ from kirara_ai.ioc.inject import Inject
 from kirara_ai.database.manager import DatabaseManager
 from .models import HuluxiaConfig, HuluxiaAdapterState
 from .api_client import HuluxiaApiClient
+from .heat.scheduler import HeatTaskScheduler
+from .heat.executor import HeatTaskExecutor
 
 logger = get_logger("HuluxiaAdapter")
 
@@ -48,6 +50,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
 
         # 发送延迟控制
         self._last_send_time: float = 0  # 上次发送时间戳（秒）
+
+        # 热度任务调度器
+        self._heat_scheduler: Optional[HeatTaskScheduler] = None
 
         logger.info(f"初始化葫芦侠适配器: {self.adapter_name}")
 
@@ -523,6 +528,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
         self.key_check_task = asyncio.create_task(self._key_check_loop())
         logger.info(f"[START] 轮询任务和定时检查任务已启动: {self.adapter_name}")
 
+        # 6. 启动热度任务调度器
+        await self._start_heat_scheduler()
+
     async def stop(self):
         """停止适配器"""
         logger.info(f"停止葫芦侠适配器: {self.adapter_name}")
@@ -545,6 +553,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
             except asyncio.CancelledError:
                 pass
             self.key_check_task = None
+
+        # 停止热度任务调度器
+        await self._stop_heat_scheduler()
 
         # 关闭 API 客户端
         if self.api_client:
@@ -949,3 +960,43 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
         finally:
             if session:
                 session.close()
+
+    # ===== 热度任务调度器管理 =====
+
+    async def _start_heat_scheduler(self):
+        """启动热度任务调度器"""
+        try:
+            # 创建执行器
+            executor = HeatTaskExecutor(
+                api_client=self.api_client,
+                delay_min_ms=self.config.heat.delay_min_ms,
+                delay_max_ms=self.config.heat.delay_max_ms,
+            )
+
+            # 创建调度器
+            self._heat_scheduler = HeatTaskScheduler(
+                config=self.config.heat, api_client=self.api_client, executor=executor
+            )
+
+            # 启动调度器
+            await self._heat_scheduler.start()
+
+        except Exception as e:
+            logger.error(f"[HEAT] 启动热度调度器失败: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            if self.config.heat_enable:
+                raise RuntimeError(f"热度功能已启用但调度器启动失败: {e}") from e
+            self._heat_scheduler = None
+
+    async def _stop_heat_scheduler(self):
+        """停止热度任务调度器"""
+        if self._heat_scheduler:
+            try:
+                await self._heat_scheduler.stop()
+                logger.info(f"[HEAT] 热度调度器已停止: {self.adapter_name}")
+            except Exception as e:
+                logger.error(f"[HEAT] 停止热度调度器失败: {e}")
+            finally:
+                self._heat_scheduler = None

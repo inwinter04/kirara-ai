@@ -557,3 +557,64 @@ class HuluxiaApiClient:
         except Exception as e:
             logger.error(f"创建评论异常: {e}")
             raise
+
+    async def boost_board_heat(self, cat_id: int, device_code: str) -> Dict[str, Any]:
+        """
+        增加指定板块的热度
+
+        通过发送GET请求到帖子列表接口来增加板块热度
+
+        Args:
+            cat_id: 板块ID
+            device_code: 设备码（UUID格式）
+
+        Returns:
+            API响应的字典
+
+        Raises:
+            Exception: 请求失败时抛出
+        """
+        # 1. 构造URL参数
+        device_code_encoded = f"%5Bd%5D{device_code}"
+
+        url = (
+            f"{self.base_url}/post/list/ANDROID/4.2.4"
+            f"?platform=2"
+            f"&gkey=000000"
+            f"&app_version=4.3.0.5"
+            f"&versioncode=20141497"
+            f"&market_id=floor_huluxia"
+            f"&_key={self._key}"
+            f"&device_code={device_code_encoded}"
+            f"&phone_brand_type=MI"
+            f"&start=0"
+            f"&count=20"
+            f"&cat_id={cat_id}"
+            f"&tag_id=0"
+            f"&sort_by=0"
+        )
+
+        # 2. 设置请求头
+        headers = {
+            "User-Agent": "okhttp/3.8.1",
+            "Host": "floor.huluxia.com",
+            "Accept-Encoding": "identity",
+        }
+
+        try:
+            # 3. 发送GET请求
+            if not self.session:
+                raise Exception("HTTP session 未初始化")
+
+            async with self.session.get(url, headers=headers) as response:
+                response_text = await response.text()
+                response_data = await self._safe_json_parse(response, response_text)
+
+                return response_data
+
+        except aiohttp.ClientError as e:
+            logger.error(f"[BOOST_HEAT] 网络请求错误: {e}")
+            raise Exception(f"网络请求错误: {e}")
+        except Exception as e:
+            logger.error(f"[BOOST_HEAT] 增加热度异常: {e}")
+            raise
