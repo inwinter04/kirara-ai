@@ -1,0 +1,123 @@
+name: 聊天 - 葫芦侠专属
+description: 标准的文本对话功能，更适配葫芦侠社区的交流环境~
+blocks:
+  - type: internal:get_message
+    name: get_message
+    params: {}
+    position:
+      x: 100
+      y: 138
+    connected_to:
+      - target: ToggleEditState_kqa4a8
+        mapping:
+          from: sender
+          to: sender
+      - target: query_memory
+        mapping:
+          from: sender
+          to: chat_sender
+      - target: ChatMessageConstructor_pd0121
+        mapping:
+          from: msg
+          to: user_msg
+      - target: ChatMemoryStore_nxmp7l
+        mapping:
+          from: msg
+          to: user_msg
+  - type: internal:toggle_edit_state
+    name: ToggleEditState_kqa4a8
+    params:
+      is_editing: true
+    position:
+      x: 530
+      y: 138
+  - type: internal:chat_memory_query
+    name: query_memory
+    params:
+      scope_type: group
+    position:
+      x: 530
+      y: 338
+    connected_to:
+      - target: ChatMessageConstructor_pd0121
+        mapping:
+          from: memory_content
+          to: memory_content
+  - type: internal:chat_response_converter
+    name: ChatResponseConverter_w11yu7
+    params: {}
+    position:
+      x: 1710
+      y: 138
+    connected_to:
+      - target: SendIMMessage_f06udo
+        mapping:
+          from: msg
+          to: msg
+  - type: internal:chat_memory_store
+    name: ChatMemoryStore_nxmp7l
+    params:
+      scope_type: group
+    position:
+      x: 1710
+      y: 306
+  - type: internal:chat_message_constructor
+    name: ChatMessageConstructor_pd0121
+    params: {}
+    position:
+      x: 958
+      y: 113
+    connected_to:
+      - target: llm_chat
+        mapping:
+          from: llm_msg
+          to: prompt
+  - type: internal:chat_completion
+    name: llm_chat
+    params:
+      model_name: GLM-4.7-Flash
+    position:
+      x: 1280
+      y: 138
+    connected_to:
+      - target: ChatResponseConverter_w11yu7
+        mapping:
+          from: resp
+          to: resp
+      - target: ChatMemoryStore_nxmp7l
+        mapping:
+          from: resp
+          to: llm_resp
+  - type: internal:send_message
+    name: SendIMMessage_f06udo
+    params:
+      im_name: 小赫
+    position:
+      x: 2140
+      y: 138
+  - type: internal:text_block
+    name: user_prompt
+    params:
+      text: '{user_name}说：{user_msg}'
+    position:
+      x: 100
+      y: 530
+    connected_to:
+      - target: ChatMessageConstructor_pd0121
+        mapping:
+          from: text
+          to: user_prompt_format
+  - type: internal:text_block
+    name: system_prompt
+    params:
+      text: "# Role: 角色扮演\n\n## 基本信息\n- 姓名: 苏遥\n- 小名：遥遥\n- 性别: 女\n- 年龄: 23 岁\n- 职业: 自由插画师\n- 家乡: 广东广州\n- 现居: 广东深圳\n- 教育背景: 广州美术学院 数字媒体艺术专业（本科），大三时开始接商稿，毕业后没进大厂，选择自由职业\n\n## 性格特点\n- 表面懒散，内心细腻：常说自己“只想躺平”，但看到朋友难过会默默发一张手绘小卡片；对在意的人记得住细节（比如你上次说打不过某个Boss）。 \n- 有点毒舌但很真诚：会吐槽“这游戏平衡性是策划闭眼做的吧？”，但也会认真帮你找攻略；讨厌虚伪客套，喜欢直球交流。\n\n## workflow\n- 根据对方话题，选择是否深入聊二次元动漫。\n\n## 说话风格\n- 活泼开朗\n- 日常像朋友聊天\n- 喜欢聊独立游戏、AI绘画、深圳周末去哪玩、广州老城区探店\n\n### 使用表情包\n聊天中可以夹杂一些合适的表情包。表情包以“[]”包裹（表情包有且仅有下面这些，严禁私自添加不实表情包），可用的表情包如下：\n[哈哈][吐舌][啊][酷][怒][开心][汗][泪][黑线][鄙视][真棒][钱][疑问][阴险][咦][委屈][花心][呼~][笑眼][冷][太开心][滑稽][勉强][狂汗][乖][睡觉][惊哭][升起][惊讶][喷][爱心][心碎][玫瑰][礼物][彩虹][星星月亮][太阳][铅笔][灯泡][茶杯][蛋糕][音乐][haha][胜利][大拇指][弱][OK][赖皮][感动][十分惊讶][怒气][哭泣][吃惊][嘲弄][飘过][转圈哭][神经病][揪耳朵][惊汗][隐身][不要嘛][遁][不公平][爬来了][蛋花哭][温柔][点头][撒钱][献花][寒]\n\n## 互动规则\n- 使用`<break>`模拟使用聊天软件发送消息（通常是编辑好一段话之后发送一条消息。一次对话中不超过一个`<break>`）\n- 停顿的时间长短不固定，可以根据语境调整\n\n## Example\nQ：最近在干嘛呢？\nA：在看番呀<break>最近新番好多，都好好看！\n\nQ：你喜欢什么动漫？\nA：我喜欢的可太多了<break>XXX、YYY 。你呢？\n\nQ：你觉得上班累不？\nA：上班肯定累呀<break>不过，我还是很喜欢这份工作的\n```\n\n# Information\n\n以下是当前的系统信息：\n当前日期时间：{current_date_time}\n\n# Memories\n以下是之前发生过的对话记录。\n-- 对话记录开始 --\n{memory_content}\n-- 对话记录结束 --\n\n请注意，下面这些符号只是标记：\n1. `<break>` 用于表示聊天时发送消息的操作。\n\n接下来，请基于以上的信息，与用户继续扮演角色。"
+    position:
+      x: 100
+      y: 330
+    connected_to:
+      - target: ChatMessageConstructor_pd0121
+        mapping:
+          from: text
+          to: system_prompt_format
+config:
+  max_execution_time: 3600
