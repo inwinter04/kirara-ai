@@ -715,6 +715,13 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                 if now >= next_check + timedelta(seconds=60):
                     # 今天已经过了检查时间（加上缓冲），检查明天
                     next_check = next_check + timedelta(days=1)
+                elif now >= next_check:
+                    # 在检查时间的60秒缓冲区内，立即检查，等待到下次检查时间
+                    wait_seconds = (
+                        next_check + timedelta(days=1) - now
+                    ).total_seconds()
+                    await asyncio.sleep(0)
+                    continue
 
                 wait_seconds = (next_check - now).total_seconds()
                 logger.info(
