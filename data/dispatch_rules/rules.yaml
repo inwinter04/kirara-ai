@@ -118,3 +118,86 @@
   - operator: or
     rules: []
   metadata: {}
+- rule_id: a63cfae8-0aa6-438d-b05a-dd9a54141f5d
+  name: 测试
+  description: ''
+  workflow_id: chat:test
+  priority: 6
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules:
+    - type: keyword
+      config:
+        keywords:
+        - 测试
+  metadata: {}
+- rule_id: query_user_id_rule
+  name: 查询用户ID
+  description: 查询并回复用户ID
+  workflow_id: chat:query_user_id
+  priority: 6
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules:
+    - type: keyword
+      config:
+        keywords:
+        - 我的ID
+        - 查询ID
+        - 查ID
+  metadata: {}
+- rule_id: query_post_id_rule
+  name: 查询帖子ID
+  description: 查询并回复当前帖子ID
+  workflow_id: chat:query_post_id
+  priority: 6
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules:
+    - type: keyword
+      config:
+        keywords:
+        - 帖子ID
+        - 查询帖子ID
+        - 当前帖子ID
+        - 这个帖子ID
+  metadata: {}
+- rule_id: query_following_rule
+  name: 查询关注列表
+  description: 查询用户的关注列表
+  workflow_id: chat:query_following
+  priority: 6
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules:
+    - type: keyword
+      config:
+        keywords:
+        - 关注列表
+        - 我的关注
+        - 查询关注
+        - 我关注了谁
+  metadata: {}
+- rule_id: query_favorite_rule
+  name: 查询收藏列表
+  description: 查询用户的收藏列表
+  workflow_id: chat:query_favorite
+  priority: 6
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules:
+    - type: keyword
+      config:
+        keywords:
+        - 收藏列表
+        - 我的收藏
+        - 查询收藏
+        - 我的收藏夹
+  metadata: {}
+
+

@@ -1,0 +1,62 @@
+name: 测试工作流
+description: 示范工作流，通过 Python 代码输出 "测试成功~~~"
+blocks:
+  - type: internal:get_message
+    name: get_message
+    params: {}
+    position:
+      x: 100
+      y: 100
+    connected_to:
+      - target: python_code
+        mapping:
+          from: sender
+          to: sender
+      - target: python_code
+        mapping:
+          from: msg
+          to: msg
+      - target: send_response
+        mapping:
+          from: sender
+          to: target
+  - type: internal:code
+    name: python_code
+    params:
+      inputs:
+        - name: sender
+          label: 发送者
+        - name: msg
+          label: 消息对象
+      outputs:
+        - name: result
+          label: 结果
+      code: "def execute(sender, msg, **kwargs):\n    result = f\"{sender.display_name} 说: {msg.content}\"\n    return {\"result\": result}\n"
+    position:
+      x: 495
+      y: 525
+    connected_to:
+      - target: text_to_msg
+        mapping:
+          from: result
+          to: text
+  - type: internal:send_message
+    name: send_response
+    params:
+      im_name: 小赫
+    position:
+      x: 1091
+      y: 388
+  - type: internal:text_to_im_message
+    name: text_to_msg
+    params: {}
+    position:
+      x: 650
+      y: 133
+    connected_to:
+      - target: send_response
+        mapping:
+          from: msg
+          to: msg
+config:
+  max_execution_time: 3600

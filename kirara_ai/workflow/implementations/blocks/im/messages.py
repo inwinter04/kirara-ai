@@ -9,8 +9,11 @@ from kirara_ai.ioc.container import DependencyContainer
 from kirara_ai.workflow.core.block import Block, Input, Output, ParamMeta
 
 
-def im_adapter_options_provider(container: DependencyContainer, block: Block) -> List[str]:
+def im_adapter_options_provider(
+    container: DependencyContainer, block: Block
+) -> List[str]:
     return [key for key, _ in container.resolve(IMManager).adapters.items()]
+
 
 class GetIMMessage(Block):
     """获取 IM 消息"""
@@ -45,7 +48,13 @@ class SendIMMessage(Block):
     container: DependencyContainer
 
     def __init__(
-        self, im_name: Annotated[Optional[str], ParamMeta(label="聊天平台适配器名称", options_provider=im_adapter_options_provider)] = None
+        self,
+        im_name: Annotated[
+            Optional[str],
+            ParamMeta(
+                label="聊天平台适配器名称", options_provider=im_adapter_options_provider
+            ),
+        ] = None,
     ):
         self.im_name = im_name
 
@@ -56,13 +65,13 @@ class SendIMMessage(Block):
         if not self.im_name:
             adapter = self.container.resolve(IMAdapter)
         else:
-            adapter = self.container.resolve(
-                IMManager).get_adapter(self.im_name)
+            adapter = self.container.resolve(IMManager).get_adapter(self.im_name)
         loop: asyncio.AbstractEventLoop = self.container.resolve(
             asyncio.AbstractEventLoop
         )
         loop.create_task(adapter.send_message(msg, target or src_msg.sender))
         return {"ok": True}
+
 
 # IMMessage 转纯文本
 
@@ -88,14 +97,31 @@ class TextToIMMessage(Block):
     inputs = {"text": Input("text", "纯文本", str, "纯文本")}
     outputs = {"msg": Output("msg", "IM 消息", IMMessage, "IM 消息")}
 
-    def __init__(self, split_by: Annotated[Optional[str], ParamMeta(label="分段符")] = None):
+    def __init__(
+        self, split_by: Annotated[Optional[str], ParamMeta(label="分段符")] = None
+    ):
         self.split_by = split_by
 
     def execute(self, text: str) -> Dict[str, Any]:
         if self.split_by:
-            return {"msg": IMMessage(sender=ChatSender.get_bot_sender(), message_elements = [TextMessage(line.strip()) for line in text.split(self.split_by) if line.strip()])}
+            return {
+                "msg": IMMessage(
+                    sender=ChatSender.get_bot_sender(),
+                    message_elements=[
+                        TextMessage(line.strip())
+                        for line in text.split(self.split_by)
+                        if line.strip()
+                    ],
+                )
+            }
         else:
-            return {"msg": IMMessage(sender=ChatSender.get_bot_sender(), message_elements=[TextMessage(text)])}
+            return {
+                "msg": IMMessage(
+                    sender=ChatSender.get_bot_sender(),
+                    message_elements=[TextMessage(text)],
+                )
+            }
+
 
 # 补充 IMMessage 消息
 class AppendIMMessage(Block):
@@ -109,5 +135,12 @@ class AppendIMMessage(Block):
     }
     outputs = {"msg": Output("msg", "IM 消息", IMMessage, "IM 消息")}
 
-    def execute(self, base_msg: IMMessage, append_msg: MessageElement) -> Dict[str, Any]:
-        return {"msg": IMMessage(sender=base_msg.sender, message_elements=base_msg.message_elements + [append_msg])}
+    def execute(
+        self, base_msg: IMMessage, append_msg: MessageElement
+    ) -> Dict[str, Any]:
+        return {
+            "msg": IMMessage(
+                sender=base_msg.sender,
+                message_elements=base_msg.message_elements + [append_msg],
+            )
+        }

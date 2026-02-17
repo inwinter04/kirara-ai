@@ -115,10 +115,6 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
             recipient: 接收者（ChatSender对象）
         """
 
-        logger.info(
-            f"[SEND_MESSAGE] 开始发送消息: recipient={recipient.user_id}, display_name={recipient.display_name}"
-        )
-
         # 1. 提取帖子ID和评论ID
         post_id = recipient.raw_metadata.get("post_id")
         comment_id = recipient.raw_metadata.get("comment_id", 0)

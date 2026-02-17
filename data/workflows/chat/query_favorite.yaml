@@ -1,0 +1,97 @@
+name: 查询收藏列表工作流
+description: 查询用户收藏列表，返回前20个收藏的帖子
+blocks:
+  - type: internal:get_message
+    name: get_message
+    params: {}
+    position:
+      x: 100
+      y: 100
+    connected_to:
+      - target: query_favorite_code
+        mapping:
+          from: sender
+          to: sender
+      - target: send_response
+        mapping:
+          from: sender
+          to: target
+  - type: internal:code
+    name: query_favorite_code
+    params:
+      inputs:
+        - name: sender
+          label: 发送者
+      outputs:
+        - name: result
+          label: 查询结果
+      code: |
+        def execute(sender, **kwargs):
+            import httpx
+
+            user_id = sender.user_id
+            device_code = "[d]95e1b6d6-73dd-44b9-916e-df5a3c363492"
+
+            url = (
+                f"https://floor.huluxia.com/post/favorite/list/ANDROID/4.1.8"
+                f"?platform=2"
+                f"&gkey=000000"
+                f"&app_version=4.2.1.6.2"
+                f"&versioncode=368"
+                f"&market_id=tool_vivo"
+                f"&_key="
+                f"&device_code={device_code}"
+                f"&phone_brand_type=MI"
+                f"&start=0"
+                f"&groupId=0"
+                f"&count=20"
+                f"&user_id={user_id}"
+            )
+
+            headers = {"User-Agent": "okhttp/3.8.1"}
+
+            with httpx.Client() as client:
+                response = client.get(url, headers=headers, timeout=10)
+                data = response.json()
+
+            posts = data.get("posts", [])
+
+            if not posts:
+                result = "你还没有收藏任何帖子哦~"
+            else:
+                lines = [f"⭐ 你的收藏列表:\n"]
+                for i, post in enumerate(posts, 1):
+                    title = post.get("title", "无标题")
+                    post_id = post.get("postID", "未知")
+                    lines.append(f"{i}. {title} (ID: {post_id})")
+                result = "\n".join(lines)
+
+            return {"result": result}
+    position:
+      x: 495
+      y: 525
+    connected_to:
+      - target: text_to_msg
+        mapping:
+          from: result
+          to: text
+  - type: internal:send_message
+    name: send_response
+    params:
+      im_name: 小赫
+    position:
+      x: 1091
+      y: 388
+  - type: internal:text_to_im_message
+    name: text_to_msg
+    params: {}
+    position:
+      x: 650
+      y: 133
+    connected_to:
+      - target: send_response
+        mapping:
+          from: msg
+          to: msg
+config:
+  max_execution_time: 3600
