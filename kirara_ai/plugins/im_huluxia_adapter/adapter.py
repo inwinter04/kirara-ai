@@ -11,10 +11,13 @@ from kirara_ai.logger import get_logger
 from kirara_ai.workflow.core.dispatch import WorkflowDispatcher
 from kirara_ai.ioc.inject import Inject
 from kirara_ai.database.manager import DatabaseManager
+from kirara_ai.llm.llm_manager import LLMManager
 from .models import HuluxiaConfig, HuluxiaAdapterState
 from .api_client import HuluxiaApiClient
 from .heat.scheduler import HeatTaskScheduler
 from .heat.executor import HeatTaskExecutor
+from .pool.scheduler import PoolTaskScheduler
+from .pool.executor import PoolTaskExecutor
 
 logger = get_logger("HuluxiaAdapter")
 
@@ -28,10 +31,16 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
     dispatcher: WorkflowDispatcher
 
     @Inject()
-    def __init__(self, config: HuluxiaConfig, db_manager: DatabaseManager):
+    def __init__(
+        self,
+        config: HuluxiaConfig,
+        db_manager: DatabaseManager,
+        llm_manager: LLMManager,
+    ):
         self.config = config
         self.adapter_name = config.name if hasattr(config, "name") else "huluxia"
         self._db_manager = db_manager
+        self._llm_manager = llm_manager
 
         # 运行时状态
         self.is_running: bool = False
@@ -53,6 +62,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
 
         # 热度任务调度器
         self._heat_scheduler: Optional[HeatTaskScheduler] = None
+
+        # 泳池灌水任务调度器
+        self._pool_scheduler: Optional[PoolTaskScheduler] = None
 
         logger.info(f"初始化葫芦侠适配器: {self.adapter_name}")
 
@@ -527,6 +539,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
         # 6. 启动热度任务调度器
         await self._start_heat_scheduler()
 
+        # 7. 启动泳池灌水任务调度器
+        await self._start_pool_scheduler()
+
     async def stop(self):
         """停止适配器"""
         logger.info(f"停止葫芦侠适配器: {self.adapter_name}")
@@ -552,6 +567,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
 
         # 停止热度任务调度器
         await self._stop_heat_scheduler()
+
+        # 停止泳池灌水任务调度器
+        await self._stop_pool_scheduler()
 
         # 关闭 API 客户端
         if self.api_client:
@@ -1003,3 +1021,48 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                 logger.error(f"[HEAT] 停止热度调度器失败: {e}")
             finally:
                 self._heat_scheduler = None
+
+    # ===== 泳池灌水任务调度器管理 =====
+
+    async def _start_pool_scheduler(self):
+        """启动泳池灌水任务调度器"""
+        try:
+            if not self.config.pool.enable:
+                logger.info("[POOL] 泳池灌水功能未启用")
+                return
+
+            executor = PoolTaskExecutor(
+                api_client=self.api_client,
+                db_manager=self._db_manager,
+                llm_manager=self._llm_manager,
+                adapter_name=self.adapter_name,
+                _key=self._key,
+                market_id=self.config.market_id,
+            )
+
+            self._pool_scheduler = PoolTaskScheduler(
+                config=self.config.pool,
+                executor=executor,
+            )
+
+            await self._pool_scheduler.start()
+
+        except Exception as e:
+            logger.error(f"[POOL] 启动泳池灌水调度器失败: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            if self.config.pool.enable:
+                raise RuntimeError(f"泳池灌水功能已启用但调度器启动失败: {e}") from e
+            self._pool_scheduler = None
+
+    async def _stop_pool_scheduler(self):
+        """停止泳池灌水任务调度器"""
+        if self._pool_scheduler:
+            try:
+                await self._pool_scheduler.stop()
+                logger.info(f"[POOL] 泳池灌水调度器已停止: {self.adapter_name}")
+            except Exception as e:
+                logger.error(f"[POOL] 停止泳池灌水调度器失败: {e}")
+            finally:
+                self._pool_scheduler = None

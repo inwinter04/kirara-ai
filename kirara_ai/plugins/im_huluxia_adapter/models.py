@@ -2,7 +2,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from typing import Optional, List, Any
 from datetime import datetime
 import uuid
-from sqlalchemy import Column, String, Integer, DateTime, Text
+from sqlalchemy import Column, String, Integer, DateTime, Text, BigInteger
 from kirara_ai.database import Base
 
 
@@ -103,6 +103,37 @@ class HuluxiaHeatConfig(BaseModel):
         return (
             f"<HuluxiaHeatConfig enable={self.enable}, schedules={len(self.schedules)}>"
         )
+
+
+# ===== 泳池灌水功能配置 =====
+class HuluxiaPoolConfig(BaseModel):
+    """泳池灌水功能配置"""
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "title": "泳池灌水",
+            "description": "在泳池板块自动浏览帖子并调用LLM生成评论",
+        },
+    )
+
+    enable: bool = Field(
+        title="启用泳池灌水",
+        description="是否启用泳池灌水功能",
+        default=True,
+        json_schema_extra={"widget": "switch"},
+    )
+    interval_minutes: int = Field(
+        title="检查间隔（分钟）",
+        description="每隔多少分钟检查一次新帖子",
+        default=20,
+        ge=5,
+        le=120,
+        json_schema_extra={"examples": [20, 30, 60]},
+    )
+
+    def __repr__(self):
+        return f"<HuluxiaPoolConfig enable={self.enable}, interval={self.interval_minutes}min>"
 
 
 # ===== 葫芦侠适配器配置 =====
@@ -227,6 +258,22 @@ class HuluxiaConfig(BaseModel):
         default=500,
     )
 
+    # ===== 泳池灌水功能配置 =====
+    pool_enable: bool = Field(
+        title="启用泳池灌水",
+        description="是否启用泳池灌水功能（在泳池板块自动浏览帖子并评论）",
+        default=True,
+        json_schema_extra={"widget": "switch"},
+    )
+
+    pool_interval_minutes: int = Field(
+        title="泳池检查间隔（分钟）",
+        description="每隔多少分钟检查一次新帖子",
+        default=20,
+        ge=5,
+        le=120,
+    )
+
     def __init__(self, **data):
         device_code_from_data = data.pop("device_code", None)
         super().__init__(**data)
@@ -235,6 +282,7 @@ class HuluxiaConfig(BaseModel):
         if not self._device_code or len(self._device_code.strip()) == 0:
             object.__setattr__(self, "_device_code", str(uuid.uuid4()))
         object.__setattr__(self, "_cached_heat_config", None)
+        object.__setattr__(self, "_cached_pool_config", None)
 
     @property
     def device_code(self) -> str:
@@ -290,6 +338,19 @@ class HuluxiaConfig(BaseModel):
             delay_max_ms=self.heat_delay_max_ms,
         )
         object.__setattr__(self, "_cached_heat_config", config)
+        return config
+
+    @property
+    def pool(self) -> HuluxiaPoolConfig:
+        """从扁平化字段构造HuluxiaPoolConfig对象（带缓存）"""
+        if self._cached_pool_config is not None:
+            return self._cached_pool_config
+
+        config = HuluxiaPoolConfig(
+            enable=self.pool_enable,
+            interval_minutes=self.pool_interval_minutes,
+        )
+        object.__setattr__(self, "_cached_pool_config", config)
         return config
 
     def model_dump(self, **kwargs):
@@ -388,6 +449,9 @@ class HuluxiaAdapterState(Base):
 
     # 凭证过期时间
     key_expires_at = Column(DateTime)
+
+    # 泳池灌水功能 - 最后处理的帖子创建时间（毫秒时间戳）
+    last_pool_post_create_time = Column(BigInteger, default=0)
 
     # 创建时间和更新时间
     created_at = Column(DateTime, default=datetime.now)

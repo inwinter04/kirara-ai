@@ -618,3 +618,74 @@ class HuluxiaApiClient:
         except Exception as e:
             logger.error(f"[BOOST_HEAT] 增加热度异常: {e}")
             raise
+
+    async def get_pool_post_list(
+        self, start: int = 0, count: int = 20
+    ) -> Dict[str, Any]:
+        """
+        获取泳池板块帖子列表
+
+        Args:
+            start: 起始位置（用于分页，传入响应中的start值）
+            count: 获取数量，默认20
+
+        Returns:
+            API响应的字典，包含：
+            - posts: 帖子列表，每个帖子包含 postID, title, detail, createTime, user 等
+            - more: 是否还有更多（1表示有）
+            - start: 下一页的起始位置
+            - status: 状态码（1表示成功）
+
+        Raises:
+            Exception: 请求失败时抛出
+        """
+        POOL_CAT_ID = 2
+        device_code_encoded = f"%5Bd%5D{self.device_code}"
+
+        start_param = start if start else 0
+
+        url = (
+            f"{self.base_url}/post/list/ANDROID/4.1.8"
+            f"?platform=2"
+            f"&gkey=000000"
+            f"&app_version=4.2.1.6.2"
+            f"&versioncode=368"
+            f"&market_id=tool_vivo"
+            f"&_key={self._key}"
+            f"&device_code={device_code_encoded}"
+            f"&phone_brand_type=MI"
+            f"&start={start_param}"
+            f"&count={count}"
+            f"&cat_id={POOL_CAT_ID}"
+            f"&tag_id=0"
+            f"&sort_by=1"
+        )
+
+        headers = {
+            "User-Agent": "okhttp/3.8.1",
+            "Host": "floor.huluxia.com",
+            "Accept-Encoding": "gzip",
+        }
+
+        try:
+            if not self.session:
+                raise Exception("HTTP session 未初始化")
+
+            async with self.session.get(url, headers=headers) as response:
+                response_text = await response.text()
+                response_data = await self._safe_json_parse(response, response_text)
+
+                logger.debug(
+                    f"[POOL_POST_LIST] 获取帖子列表成功: start={start_param}, "
+                    f"count={len(response_data.get('posts', []))}, "
+                    f"more={response_data.get('more')}"
+                )
+
+                return response_data
+
+        except aiohttp.ClientError as e:
+            logger.error(f"[POOL_POST_LIST] 网络请求错误: {e}")
+            raise Exception(f"网络请求错误: {e}")
+        except Exception as e:
+            logger.error(f"[POOL_POST_LIST] 获取帖子列表异常: {e}")
+            raise
