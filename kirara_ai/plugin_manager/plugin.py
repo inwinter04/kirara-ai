@@ -4,6 +4,7 @@ from kirara_ai.events.event_bus import EventBus
 from kirara_ai.im.im_registry import IMRegistry
 from kirara_ai.im.manager import IMManager
 from kirara_ai.llm.llm_registry import LLMBackendRegistry
+from kirara_ai.workflow.core.block.registry import BlockRegistry
 from kirara_ai.workflow.core.dispatch import WorkflowDispatcher
 
 
@@ -30,6 +31,7 @@ class Plugin(ABC):
     llm_registry: LLMBackendRegistry
     im_registry: IMRegistry
     im_manager: IMManager
+    block_registry: BlockRegistry
 
     @abstractmethod
     def on_load(self):

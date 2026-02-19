@@ -3,6 +3,7 @@ from kirara_ai.logger import get_logger
 from kirara_ai.plugin_manager.plugin import Plugin
 from kirara_ai.web.app import WebServer
 from .adapter import HuluxiaAdapter
+from .blocks import GetHuluxiaCredentials
 from .models import HuluxiaConfig
 
 logger = get_logger("HuluxiaAdapterPlugin")
@@ -27,8 +28,17 @@ class HuluxiaAdapterPlugin(Plugin):
             HuluxiaConfig,
             "葫芦侠",
             "葫芦侠社区平台",
-            "由神奇小冬天开发的葫芦侠适配器。[冬天的博客](https://www.iamdt.cn)"
+            "由神奇小冬天开发的葫芦侠适配器。[冬天的博客](https://www.iamdt.cn)",
         )
+
+        # 注册工作流Block
+        self.block_registry.register(
+            "get_huluxia_credentials",
+            "huluxia",
+            GetHuluxiaCredentials,
+            "葫芦侠: 获取登录凭证",
+        )
+        logger.info("已注册葫芦侠工作流Block")
 
         # 注册静态资源（平台图标）
         icon_path = os.path.join(os.path.dirname(__file__), "assets", "huluxia.png")

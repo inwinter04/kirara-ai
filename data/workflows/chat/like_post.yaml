@@ -1,0 +1,142 @@
+name: 帖子点赞工作流
+description: 为帖子点赞并回复
+blocks:
+  - type: internal:get_message
+    name: get_message
+    params: {}
+    position:
+      x: 100
+      y: 100
+    connected_to:
+      - target: like_post_code
+        mapping:
+          from: sender
+          to: sender
+      - target: send_response
+        mapping:
+          from: sender
+          to: target
+  - type: huluxia:get_huluxia_credentials
+    name: get_credentials
+    params: {}
+    position:
+      x: 100
+      y: 280
+    connected_to:
+      - target: like_post_code
+        mapping:
+          from: key
+          to: key
+      - target: like_post_code
+        mapping:
+          from: device_code
+          to: device_code
+  - type: internal:code
+    name: like_post_code
+    params:
+      inputs:
+        - name: sender
+          label: 发送者
+        - name: key
+          label: 葫芦侠Key
+        - name: device_code
+          label: 设备码
+      outputs:
+        - name: result
+          label: 点赞结果
+      code: |
+        import requests
+        import urllib.parse
+        import random
+        import time
+
+        def execute(sender, key, device_code, **kwargs):
+            post_id = sender.raw_metadata.get('post_id')
+            if not post_id:
+                return {"result": "无法获取当前帖子的ID信息~"}
+
+            if not key:
+                return {"result": "机器人当前未登录，暂时无法点赞~"}
+
+            device_code_encoded = urllib.parse.quote(f"[d]{device_code}")
+
+            url = (
+                f"http://floor.huluxia.com/post/praise/ANDROID/2.1"
+                f"?platform=2&gkey=000000&app_version=4.2.1.6.2"
+                f"&versioncode=368&market_id=tool_vivo&_key={key}"
+                f"&device_code={device_code_encoded}&phone_brand_type=MI"
+                f"&post_id={post_id}"
+            )
+
+            headers = {"User-Agent": "okhttp/3.8.1"}
+
+            like_success_replies = [
+                "已为这个帖子点赞啦~",
+                "点赞成功！收到你的支持了！",
+                "帖子点赞完成！感谢支持~",
+                "成功点赞！希望能帮到你！",
+            ]
+
+            already_liked_replies = [
+                "这个帖子你已经点过赞了~",
+                "之前已经给这个帖子点过赞啦！",
+                "这个帖子早已收到你的赞了~",
+                "看来你很喜欢这个帖子，之前已经点赞过了！",
+            ]
+
+            try:
+                resp = requests.get(url, headers=headers, timeout=10)
+                data = resp.json()
+                status = data.get("status", 0)
+                praise = data.get("praise", 0)
+
+                if status != 1:
+                    return {"result": "点赞失败了，请稍后再试一下~"}
+
+                if praise == 1:
+                    # 点赞操作执行成功
+                    return {"result": random.choice(like_success_replies)}
+                elif praise == 2:
+                    # 取消点赞操作执行成功
+                    # 由于点赞和取消点赞共用同一 API，无法预先判断当前操作类型
+                    # praise==1 表示点赞成功，praise==2 表示取消点赞成功
+                    # 因此需要重新发送请求进行点赞
+                    time.sleep(1)
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    data = resp.json()
+                    if data.get("status") == 1 and data.get("praise") == 1:
+                        return {"result": random.choice(already_liked_replies)}
+                    return {"result": "操作失败，请稍后重试~"}
+                else:
+                    return {"result": "点赞状态异常，请稍后重试~"}
+            except Exception as e:
+                print(f"[DEBUG] 点赞异常: {e}")
+                return {"result": "点赞请求出错了，请稍后再试~"}
+    position:
+      x: 495
+      y: 400
+    connected_to:
+      - target: text_to_msg
+        mapping:
+          from: result
+          to: text
+  - type: internal:send_message
+    name: send_response
+    params:
+      im_name: 小赫
+    position:
+      x: 1091
+      y: 200
+  - type: internal:text_to_im_message
+    name: text_to_msg
+    params: {}
+    position:
+      x: 800
+      y: 400
+    connected_to:
+      - target: send_response
+        mapping:
+          from: msg
+          to: msg
+config:
+  max_execution_time: 3600

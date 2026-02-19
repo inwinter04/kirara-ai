@@ -199,5 +199,27 @@
         - 查询收藏
         - 我的收藏夹
   metadata: {}
+- rule_id: like_post_rule
+  name: 帖子点赞
+  description: 为当前帖子点赞
+  workflow_id: chat:like_post
+  priority: 6
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules:
+    - type: prefix
+      config:
+        prefix: 帖子点赞
+    - type: prefix
+      config:
+        prefix: 点赞帖子
+    - type: prefix
+      config:
+        prefix: 点赞此帖
+    - type: prefix
+      config:
+        prefix: 此帖点赞
+  metadata: {}
 
 

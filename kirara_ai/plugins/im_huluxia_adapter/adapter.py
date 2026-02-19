@@ -68,6 +68,11 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
 
         logger.info(f"初始化葫芦侠适配器: {self.adapter_name}")
 
+    @property
+    def key(self) -> Optional[str]:
+        """获取当前登录凭证 Key"""
+        return self._key
+
     # ===== IMAdapter 接口实现 =====
 
     async def convert_to_message(self, raw_message: dict) -> IMMessage:
