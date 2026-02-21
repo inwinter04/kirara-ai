@@ -221,6 +221,31 @@
       config:
         prefix: 此帖点赞
   metadata: {}
+- rule_id: follow_user_rule
+  name: 关注用户
+  description: 关注触发消息的用户
+  workflow_id: chat:follow_user
+  priority: 6
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules:
+    - type: prefix
+      config:
+        prefix: 关注我
+    - type: prefix
+      config:
+        prefix: 给我关注
+    - type: prefix
+      config:
+        prefix: 求关注
+    - type: prefix
+      config:
+        prefix: 互关
+    - type: prefix
+      config:
+        prefix: 关注一下
+  metadata: {}
 - rule_id: f4d9693b-abc9-4fce-b3a2-0b7ef439e9b8
   name: QQ聊天
   description: ''

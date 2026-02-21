@@ -1,0 +1,183 @@
+name: 关注用户工作流
+description: 关注用户并检查关系状态
+blocks:
+  - type: internal:get_message
+    name: get_message
+    params: {}
+    position:
+      x: 100
+      y: 100
+    connected_to:
+      - target: follow_user_code
+        mapping:
+          from: sender
+          to: sender
+      - target: send_response
+        mapping:
+          from: sender
+          to: target
+  - type: huluxia:get_huluxia_credentials
+    name: get_credentials
+    params: {}
+    position:
+      x: 100
+      y: 280
+    connected_to:
+      - target: follow_user_code
+        mapping:
+          from: key
+          to: key
+      - target: follow_user_code
+        mapping:
+          from: device_code
+          to: device_code
+  - type: internal:code
+    name: follow_user_code
+    params:
+      inputs:
+        - name: sender
+          label: 发送者
+        - name: key
+          label: 葫芦侠Key
+        - name: device_code
+          label: 设备码
+      outputs:
+        - name: result
+          label: 关注结果
+      code: |
+        import requests
+        import urllib.parse
+        import hashlib
+        import time
+        import random
+
+        SIGN_KEY = "fa1c28a5b62e79c3e63d9030b6142e4b"
+
+        def generate_sign(user_id: str, timestamp: str) -> str:
+            params = {"time": timestamp, "user_id": user_id}
+            keys = sorted(params.keys())
+            data = "".join(f"{k}{params[k]}" for k in keys)
+            data += SIGN_KEY
+            return hashlib.md5(data.encode()).hexdigest().lower()
+
+        def execute(sender, key, device_code, **kwargs):
+            user_id = sender.user_id
+            if not user_id:
+                return {"result": "无法获取你的用户ID信息，请稍后再试~"}
+
+            if not key:
+                return {"result": "机器人当前未登录，暂时无法关注用户~"}
+
+            device_code_encoded = urllib.parse.quote(f"[d]{device_code}")
+            current_time = str(int(time.time() * 1000))
+            sign = generate_sign(user_id, current_time)
+
+            print(f"[DEBUG] 关注用户 - user_id: {user_id}, time: {current_time}, sign: {sign}")
+
+            follow_url = (
+                f"http://floor.huluxia.com/friendship/follow/ANDROID/4.1.8"
+                f"?user_id={user_id}&time={current_time}&platform=2&gkey=000000"
+                f"&app_version=4.3.1.4&versioncode=393&market_id=tool_wandoujia"
+                f"&_key={key}&device_code={device_code_encoded}&phone_brand_type=MI"
+            )
+
+            check_url = (
+                f"http://floor.huluxia.com/friendship/check/ANDROID/2.1"
+                f"?user_id={user_id}&platform=2&gkey=000000"
+                f"&app_version=4.3.1.4&versioncode=393&market_id=tool_wandoujia"
+                f"&_key={key}&device_code={device_code_encoded}&phone_brand_type=MI"
+            )
+
+            headers = {"User-Agent": "okhttp/3.8.1", "Content-Type": "application/x-www-form-urlencoded"}
+
+            mutual_follow_replies = [
+                "关注成功啦！我们已经是互相关注的好朋友了呢，期待更多互动哦！",
+                "太棒了！互关达成！以后我们就是好朋友了，有什么问题随时找我！",
+                "耶！互相关注成功！感谢你的关注，以后一起愉快地玩耍吧！",
+                "关注成功！我们现在是互关好友了，很高兴认识你呀！",
+                "恭喜互关成功！我们的关系更进一步了，欢迎常来聊天！",
+                "互关达成！感谢你的关注，期待与你更多的交流互动！",
+                "成功互关！你是我的好朋友了，有什么需要帮忙的尽管说！",
+            ]
+
+            need_follow_back_replies = [
+                "我已经关注你啦！但是你好像还没有关注我哦，记得回关一下，不然我是会定期取关的！",
+                "关注成功了！不过我还没看到你的回关呢，如果长期不互关的话会取关的哦~",
+                "我已经关注你了！记得也关注我一下呀，不回关的话过段时间可能会取消关注呢！",
+                "关注完成！但是我们是单向关注状态呢，记得回关我保持互关关系哦，否则会取关哦！",
+                "好的，我关注你了！不过你还没关注我，请记得回关，不然我会定期清理非互关好友！",
+                "关注成功！现在等待你的回关啦，如果长时间不互关我会取消关注，记得回我一下！",
+                "我已经是你粉丝了！但是你还没有关注我，记得互关一下，不互关的话我会定期取关哦！",
+            ]
+
+            error_replies = [
+                "哎呀，关注好像出了点问题，可能是系统繁忙，请稍后再试一下！",
+                "关注失败了，系统可能出现了异常，麻烦稍后重试一下哦！",
+                "出了点小状况，关注没有成功，请等一会再试吧！",
+                "系统似乎有点问题，关注操作没能完成，稍后再来试试！",
+                "抱歉，关注过程中遇到了一些问题，可能是网络或系统原因，请重试！",
+                "关注操作遇到了异常，可能需要稍后再试一下，谢谢理解！",
+            ]
+
+            try:
+                resp = requests.post(follow_url, data={"sign": sign}, headers=headers, timeout=10)
+                data = resp.json()
+                print(f"[DEBUG] 关注API响应: {data}")
+                status = data.get("status", 0)
+
+                if status != 1:
+                    msg = data.get("msg", "")
+                    if "未登录" in msg:
+                        return {"result": "机器人登录状态已失效，请重新登录后再试~"}
+                    return {"result": f"关注失败了，请稍后再试一下~({msg})"}
+
+                time.sleep(0.5)
+
+                check_resp = requests.get(check_url, headers={"User-Agent": "okhttp/3.8.1"}, timeout=10)
+                check_data = check_resp.json()
+                print(f"[DEBUG] 检查关系API响应: {check_data}")
+
+                if check_data.get("status") != 1:
+                    return {"result": random.choice(error_replies)}
+
+                friendship = check_data.get("friendship", 0)
+                print(f"[DEBUG] 用户关系状态 friendship={friendship} (0=未关注, 1=单向关注, 2=互关)")
+
+                if friendship == 2:
+                    return {"result": random.choice(mutual_follow_replies)}
+                elif friendship == 1:
+                    return {"result": random.choice(need_follow_back_replies)}
+                else:
+                    return {"result": random.choice(error_replies)}
+
+            except Exception as e:
+                print(f"[DEBUG] 关注异常: {e}")
+                return {"result": "关注请求出错了，请稍后再试~"}
+    position:
+      x: 495
+      y: 400
+    connected_to:
+      - target: text_to_msg
+        mapping:
+          from: result
+          to: text
+  - type: internal:send_message
+    name: send_response
+    params:
+      im_name: 小赫
+    position:
+      x: 1091
+      y: 200
+  - type: internal:text_to_im_message
+    name: text_to_msg
+    params: {}
+    position:
+      x: 800
+      y: 400
+    connected_to:
+      - target: send_response
+        mapping:
+          from: msg
+          to: msg
+config:
+  max_execution_time: 3600
