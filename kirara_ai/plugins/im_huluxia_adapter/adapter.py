@@ -18,6 +18,7 @@ from .heat.scheduler import HeatTaskScheduler
 from .heat.executor import HeatTaskExecutor
 from .pool.scheduler import PoolTaskScheduler
 from .pool.executor import PoolTaskExecutor
+from .utils import clean_unsupported_emoticons, clean_markdown
 
 logger = get_logger("HuluxiaAdapter")
 
@@ -258,6 +259,22 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                         f"敏感词已过滤: '{original_text_for_filter}' -> '{text}'"
                     )
 
+            # 5.5. 清理不支持的表情
+            original_text_for_emoticon = text
+            text = clean_unsupported_emoticons(text)
+            if text != original_text_for_emoticon:
+                logger.debug(
+                    f"不支持的表情已清理: '{original_text_for_emoticon}' -> '{text}'"
+                )
+
+            # 5.6. 清理Markdown语法
+            original_text_for_markdown = text
+            text = clean_markdown(text)
+            if text != original_text_for_markdown:
+                logger.debug(
+                    f"Markdown语法已清理: '{original_text_for_markdown[:50]}...' -> '{text[:50]}...'"
+                )
+
             # 6. 处理消息分割：检测\n\n数量
             double_newline_count = text.count("\n\n")
 
@@ -346,6 +363,22 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                         logger.debug(
                             f"敏感词已过滤: '{original_text_for_filter}' -> '{text}'"
                         )
+
+                # 5.5. 清理不支持的表情
+                original_text_for_emoticon = text
+                text = clean_unsupported_emoticons(text)
+                if text != original_text_for_emoticon:
+                    logger.debug(
+                        f"不支持的表情已清理: '{original_text_for_emoticon}' -> '{text}'"
+                    )
+
+                # 5.6. 清理Markdown语法
+                original_text_for_markdown = text
+                text = clean_markdown(text)
+                if text != original_text_for_markdown:
+                    logger.debug(
+                        f"Markdown语法已清理: '{original_text_for_markdown[:50]}...' -> '{text[:50]}...'"
+                    )
 
                 # 6. 替换\n\n为\n，不分割
                 text = text.replace("\n\n", "\n")

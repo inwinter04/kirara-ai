@@ -123,7 +123,7 @@
   description: ''
   workflow_id: chat:test
   priority: 6
-  enabled: true
+  enabled: false
   rule_groups:
   - operator: or
     rules:
@@ -221,5 +221,15 @@
       config:
         prefix: 此帖点赞
   metadata: {}
-
-
+- rule_id: f4d9693b-abc9-4fce-b3a2-0b7ef439e9b8
+  name: QQ聊天
+  description: ''
+  workflow_id: chat:qq_glm_with_image
+  priority: 5
+  enabled: true
+  rule_groups:
+  - operator: or
+    rules:
+    - type: bot_mention
+      config: {}
+  metadata: {}

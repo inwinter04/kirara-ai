@@ -1,0 +1,46 @@
+name: 清空记忆
+description: ''
+blocks:
+  - type: internal:get_message
+    name: GetIMMessage_kyz81w
+    params: {}
+    position:
+      x: 100
+      y: 138
+    connected_to:
+      - target: ClearMemory_i0pxw8
+        mapping:
+          from: sender
+          to: chat_sender
+      - target: ClearMemory_jtx8yz
+        mapping:
+          from: sender
+          to: chat_sender
+  - type: system:clear_memory
+    name: ClearMemory_i0pxw8
+    params:
+      scope_type: group
+    position:
+      x: 420
+      y: 138
+    connected_to:
+      - target: SendIMMessage_prijkv
+        mapping:
+          from: response
+          to: msg
+  - type: internal:send_message
+    name: SendIMMessage_prijkv
+    params:
+      im_name: 小赫
+    position:
+      x: 850
+      y: 138
+  - type: system:clear_memory
+    name: ClearMemory_jtx8yz
+    params:
+      scope_type: member
+    position:
+      x: 420
+      y: 338
+config:
+  max_execution_time: 3600

@@ -13,6 +13,7 @@ from kirara_ai.logger import get_logger
 
 from ..api_client import HuluxiaApiClient
 from ..models import HuluxiaAdapterState
+from ..utils import clean_unsupported_emoticons
 
 logger = get_logger("PoolTaskExecutor")
 
@@ -364,6 +365,16 @@ class PoolTaskExecutor:
             text: 评论内容
         """
         try:
+            # 清理不支持的表情
+            # 注意：泳池灌水功能中 LLM 处于可控状态，不会输出 Markdown 格式，
+            # 因此无需调用 clean_markdown()，避免增加不必要的复杂度
+            original_text = text
+            text = clean_unsupported_emoticons(text)
+            if text != original_text:
+                logger.debug(
+                    f"[POOL_EXECUTOR] 不支持的表情已清理: '{original_text}' -> '{text}'"
+                )
+
             response = await self.api_client.create_comment(
                 _key=self._key,
                 market_id=self.market_id,

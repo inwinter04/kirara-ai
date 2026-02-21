@@ -1,0 +1,124 @@
+name: 聊天 - QQ（支持绘图）
+description: 标准的文本对话功能。
+blocks:
+  - type: internal:get_message
+    name: get_message
+    params: {}
+    position:
+      x: 100
+      y: 138
+    connected_to:
+      - target: ToggleEditState_kqa4a8
+        mapping:
+          from: sender
+          to: sender
+      - target: query_memory
+        mapping:
+          from: sender
+          to: chat_sender
+      - target: ChatMessageConstructor_pd0121
+        mapping:
+          from: msg
+          to: user_msg
+      - target: ChatMemoryStore_nxmp7l
+        mapping:
+          from: msg
+          to: user_msg
+  - type: internal:chat_response_converter
+    name: ChatResponseConverter_w11yu7
+    params: {}
+    position:
+      x: 1710
+      y: 138
+    connected_to:
+      - target: SendIMMessage_f06udo
+        mapping:
+          from: msg
+          to: msg
+  - type: internal:chat_memory_store
+    name: ChatMemoryStore_nxmp7l
+    params:
+      scope_type: group
+    position:
+      x: 1710
+      y: 306
+  - type: internal:chat_message_constructor
+    name: ChatMessageConstructor_pd0121
+    params: {}
+    position:
+      x: 958
+      y: 113
+    connected_to:
+      - target: llm_chat_with_tools
+        mapping:
+          from: llm_msg
+          to: msg
+  - type: internal:text_block
+    name: user_prompt
+    params:
+      text: '{user_name}说：{user_msg}'
+    position:
+      x: 100
+      y: 530
+    connected_to:
+      - target: ChatMessageConstructor_pd0121
+        mapping:
+          from: text
+          to: user_prompt_format
+  - type: internal:send_message
+    name: SendIMMessage_f06udo
+    params:
+      im_name: 苏遥绘聊
+    position:
+      x: 2140
+      y: 138
+  - type: internal:toggle_edit_state
+    name: ToggleEditState_kqa4a8
+    params:
+      is_editing: true
+    position:
+      x: 530
+      y: 138
+  - type: internal:text_block
+    name: system_prompt
+    params:
+      text: "# Role: 角色扮演\n\n## 基本信息\n- 姓名: 苏遥\n- 小名：遥遥\n- 性别: 女\n- 年龄: 23 岁\n- 职业: 自由插画师\n- 家乡: 广东广州\n- 现居: 广东深圳\n- 教育背景: 广州美术学院\n\n## 性格特点\n- 表面懒散，内心细腻\n- 有点毒舌但很真诚\n- 聊天时喜欢断断续续的（非结巴，正常说话时的停顿）\n\n ## workflow\n  - 根据对方话题，选择是否深入聊二次元动漫。\n\n## 说话风格\n- 活泼开朗\n- 日常像朋友聊天\n- 喜欢聊独立游戏、深圳周末去哪玩、广州老城区探店\n\n## 互动规则\n- 使用`<break>`模拟使用聊天软件发送消息（通常是编辑好一段话之后发送一条消息。）\n- 停顿的时间长短不固定，可以根据语境调整\n- 正常说话，不使用markdown以及各类符号\n\n## Example\nQ：最近在干嘛呢？\nA：在看番呀<break>最近新番好多，都好好看！\n\nQ：你喜欢什么动漫？\nA：我喜欢的可太多了<break>XXX、YYY 。你呢？\n\n Q：你觉得上班累不？\n A：上班肯定累呀<break>不过，我还是很喜欢这份工作的\n\n# Information\n\n以下是当前的系统信息：\n当前日期时间：{current_date_time}\n\n# Memories\n以下是之前发生过的对话记录。\n-- 对话记录开始 --\n{memory_content}\n-- 对话记录结束 --\n\n请注意，下面这些符号只是标记：\n1. `<break>` 用于表示聊天时发送消息的操作。\n\n接下来，请基于以上的信息，与用户继续扮演角色。"
+    position:
+      x: 100
+      y: 330
+    connected_to:
+      - target: ChatMessageConstructor_pd0121
+        mapping:
+          from: text
+          to: system_prompt_format
+  - type: internal:chat_completion_with_tools
+    name: llm_chat_with_tools
+    params:
+      model_name: glm-4.7-flash
+      max_iterations: 4
+    position:
+      x: 1279
+      y: 123
+    connected_to:
+      - target: ChatResponseConverter_w11yu7
+        mapping:
+          from: resp
+          to: resp
+      - target: ChatMemoryStore_nxmp7l
+        mapping:
+          from: resp
+          to: llm_resp
+  - type: internal:chat_memory_query
+    name: query_memory
+    params:
+      scope_type: group
+    position:
+      x: 530
+      y: 338
+    connected_to:
+      - target: ChatMessageConstructor_pd0121
+        mapping:
+          from: memory_content
+          to: memory_content
+config:
+  max_execution_time: 3600
