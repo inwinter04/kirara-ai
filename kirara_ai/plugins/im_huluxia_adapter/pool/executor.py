@@ -22,6 +22,8 @@ MAX_PAGES = 5
 PAGE_SIZE = 20
 COMMENT_DELAY_MIN_MS = 10000
 COMMENT_DELAY_MAX_MS = 80000
+MAX_LLM_RETRIES = 3
+RETRY_DELAY_BASE = 2.0
 
 POOL_COMMENT_PROMPT = """# Role: 角色扮演
 
@@ -266,6 +268,18 @@ class PoolTaskExecutor:
 
         return {"new": new_posts, "skipped": skipped_posts}
 
+    def _is_retryable_error(self, error: Exception) -> bool:
+        """判断LLM请求错误是否可重试"""
+        if isinstance(error, (ConnectionError, TimeoutError)):
+            return True
+
+        if hasattr(error, "response") and error.response is not None:
+            status = getattr(error.response, "status_code", None)
+            if status:
+                return status == 429 or 500 <= status < 600
+
+        return False
+
     def _parse_post(self, post_data: dict) -> PoolPost:
         """
         解析帖子数据
@@ -289,7 +303,7 @@ class PoolTaskExecutor:
 
     async def _generate_comment(self, post: PoolPost) -> Optional[str]:
         """
-        调用LLM生成评论
+        调用LLM生成评论（带重试机制）
 
         Args:
             post: 帖子对象
@@ -297,64 +311,88 @@ class PoolTaskExecutor:
         Returns:
             生成的评论文本，失败返回None
         """
-        try:
-            model_id = self.llm_manager.get_models_by_ability(
-                ModelType.LLM, LLMAbility.TextChat
-            )
-            if not model_id:
-                logger.error("[POOL_EXECUTOR] 没有可用的LLM模型")
-                return None
-
-            llm = self.llm_manager.get_llm(model_id)
-            if not llm:
-                logger.error(f"[POOL_EXECUTOR] 获取LLM适配器失败: model_id={model_id}")
-                return None
-
-            prompt = POOL_COMMENT_PROMPT.format(
-                author_name=post.author_name,
-                title=post.title,
-                detail=post.detail,
-            )
-
-            messages = [
-                LLMChatMessage(role="user", content=[LLMChatTextContent(text=prompt)])
-            ]
-
-            request = LLMChatRequest(
-                messages=messages,
-                model=model_id,
-            )
-
-            logger.info(
-                f"[POOL_EXECUTOR] 调用LLM生成评论: model={model_id}, post_id={post.post_id}"
-            )
-
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: llm.chat(request))
-
-            if not response or not response.message or not response.message.content:
-                logger.warning("[POOL_EXECUTOR] LLM返回空响应")
-                return None
-
-            comment_text = ""
-            for content in response.message.content:
-                if hasattr(content, "text"):
-                    comment_text += content.text
-
-            comment_text = comment_text.strip()
-            if not comment_text:
-                logger.warning("[POOL_EXECUTOR] LLM返回的评论为空")
-                return None
-
-            logger.info(f"[POOL_EXECUTOR] 生成评论成功: {comment_text[:50]}...")
-            return comment_text
-
-        except Exception as e:
-            logger.error(f"[POOL_EXECUTOR] 生成评论异常: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
+        model_id = self.llm_manager.get_models_by_ability(
+            ModelType.LLM, LLMAbility.TextChat
+        )
+        if not model_id:
+            logger.error("[POOL_EXECUTOR] 没有可用的LLM模型")
             return None
+
+        llm = self.llm_manager.get_llm(model_id)
+        if not llm:
+            logger.error(f"[POOL_EXECUTOR] 获取LLM适配器失败: model_id={model_id}")
+            return None
+
+        prompt = POOL_COMMENT_PROMPT.format(
+            author_name=post.author_name,
+            title=post.title,
+            detail=post.detail,
+        )
+
+        messages = [
+            LLMChatMessage(role="user", content=[LLMChatTextContent(text=prompt)])
+        ]
+
+        request = LLMChatRequest(
+            messages=messages,
+            model=model_id,
+        )
+
+        logger.info(
+            f"[POOL_EXECUTOR] 调用LLM生成评论: model={model_id}, post_id={post.post_id}"
+        )
+
+        for attempt in range(MAX_LLM_RETRIES + 1):
+            try:
+                if attempt > 0:
+                    base_delay = RETRY_DELAY_BASE * (2 ** (attempt - 1))
+                    jitter = random.uniform(0, base_delay * 0.1)
+                    delay = base_delay + jitter
+                    logger.warning(
+                        f"[POOL_EXECUTOR] LLM请求重试 ({attempt}/{MAX_LLM_RETRIES + 1})，等待 {delay:.1f}s"
+                    )
+                    await asyncio.sleep(delay)
+
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(None, lambda: llm.chat(request))
+
+                if not response or not response.message or not response.message.content:
+                    logger.warning("[POOL_EXECUTOR] LLM返回空响应")
+                    return None
+
+                comment_text = ""
+                for content in response.message.content:
+                    if hasattr(content, "text"):
+                        comment_text += content.text
+
+                comment_text = comment_text.strip()
+                if not comment_text:
+                    logger.warning("[POOL_EXECUTOR] LLM返回的评论为空")
+                    return None
+
+                logger.info(f"[POOL_EXECUTOR] 生成评论成功: {comment_text[:50]}...")
+                return comment_text
+
+            except Exception as e:
+                is_retryable = self._is_retryable_error(e)
+
+                if attempt < MAX_LLM_RETRIES and is_retryable:
+                    error_type = (
+                        "429 速率限制"
+                        if hasattr(e, "response")
+                        and getattr(e.response, "status_code", None) == 429
+                        else str(type(e).__name__)
+                    )
+                    logger.warning(
+                        f"[POOL_EXECUTOR] LLM请求失败 ({attempt + 1}/{MAX_LLM_RETRIES + 1}): {error_type}"
+                    )
+                    continue
+
+                logger.error(f"[POOL_EXECUTOR] 生成评论异常: {e}")
+                import traceback
+
+                logger.error(traceback.format_exc())
+                return None
 
     async def _send_comment(self, post_id: int, text: str):
         """
