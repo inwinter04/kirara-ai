@@ -18,6 +18,8 @@ from .heat.scheduler import HeatTaskScheduler
 from .heat.executor import HeatTaskExecutor
 from .pool.scheduler import PoolTaskScheduler
 from .pool.executor import PoolTaskExecutor
+from .follow_check.scheduler import FollowCheckScheduler
+from .follow_check.executor import FollowCheckExecutor
 from .utils import clean_unsupported_emoticons, clean_markdown
 
 logger = get_logger("HuluxiaAdapter")
@@ -66,6 +68,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
 
         # 泳池灌水任务调度器
         self._pool_scheduler: Optional[PoolTaskScheduler] = None
+
+        # 互关检查任务调度器
+        self._follow_check_scheduler: Optional[FollowCheckScheduler] = None
 
         logger.info(f"初始化葫芦侠适配器: {self.adapter_name}")
 
@@ -580,6 +585,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
         # 7. 启动泳池灌水任务调度器
         await self._start_pool_scheduler()
 
+        # 8. 启动互关检查任务调度器
+        await self._start_follow_check_scheduler()
+
     async def stop(self):
         """停止适配器"""
         logger.info(f"停止葫芦侠适配器: {self.adapter_name}")
@@ -608,6 +616,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
 
         # 停止泳池灌水任务调度器
         await self._stop_pool_scheduler()
+
+        # 停止互关检查任务调度器
+        await self._stop_follow_check_scheduler()
 
         # 关闭 API 客户端
         if self.api_client:
@@ -1104,3 +1115,49 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                 logger.error(f"[POOL] 停止泳池灌水调度器失败: {e}")
             finally:
                 self._pool_scheduler = None
+
+    # ===== 互关检查任务调度器管理 =====
+
+    async def _start_follow_check_scheduler(self):
+        """启动互关检查任务调度器"""
+        try:
+            if not self.config.follow_check.enable:
+                logger.info("[FOLLOW_CHECK] 互关检查功能未启用")
+                return
+
+            executor = FollowCheckExecutor(
+                api_client=self.api_client,
+                user_id=self.user_id,
+                unfollow_delay_ms=1200,
+            )
+
+            self._follow_check_scheduler = FollowCheckScheduler(
+                config=self.config.follow_check,
+                api_client=self.api_client,
+                executor=executor,
+            )
+
+            await self._follow_check_scheduler.start()
+            logger.info(
+                f"[FOLLOW_CHECK] 互关检查调度器已启动: {self.adapter_name}, "
+                f"执行时间: {self.config.follow_check.time}"
+            )
+
+        except Exception as e:
+            logger.error(f"[FOLLOW_CHECK] 启动互关检查调度器失败: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            if self.config.follow_check.enable:
+                raise RuntimeError(f"互关检查功能已启用但调度器启动失败: {e}") from e
+
+    async def _stop_follow_check_scheduler(self):
+        """停止互关检查任务调度器"""
+        if self._follow_check_scheduler:
+            try:
+                await self._follow_check_scheduler.stop()
+                logger.info(f"[FOLLOW_CHECK] 互关检查调度器已停止: {self.adapter_name}")
+            except Exception as e:
+                logger.error(f"[FOLLOW_CHECK] 停止互关检查调度器失败: {e}")
+            finally:
+                self._follow_check_scheduler = None

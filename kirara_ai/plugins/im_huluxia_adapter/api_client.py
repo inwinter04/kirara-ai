@@ -689,3 +689,153 @@ class HuluxiaApiClient:
         except Exception as e:
             logger.error(f"[POOL_POST_LIST] 获取帖子列表异常: {e}")
             raise
+
+    async def get_following_list(
+        self, user_id: str, start: int = 0, count: int = 20
+    ) -> Dict[str, Any]:
+        """
+        获取用户的关注列表
+
+        Args:
+            user_id: 用户ID
+            start: 起始位置（用于分页）
+            count: 获取数量，默认20
+
+        Returns:
+            API响应的字典，包含：
+            - friendships: 关注列表，每个包含 user(userID, nick), friendship, createTime
+            - more: 是否还有更多（1表示有）
+            - start: 下一页的起始位置
+            - status: 状态码（1表示成功）
+
+        Raises:
+            Exception: 请求失败时抛出
+        """
+        device_code_encoded = f"%5Bd%5D{self.device_code}"
+
+        url = (
+            f"{self.base_url}/friendship/following/list/ANDROID/4.1.8"
+            f"?platform=2"
+            f"&gkey=000000"
+            f"&app_version=4.3.1.4"
+            f"&versioncode=393"
+            f"&market_id=tool_wandoujia"
+            f"&_key={self._key}"
+            f"&device_code={device_code_encoded}"
+            f"&phone_brand_type=MI"
+            f"&start={start}"
+            f"&count={count}"
+            f"&user_id={user_id}"
+        )
+
+        headers = {
+            "User-Agent": "okhttp/3.8.1",
+            "Host": "floor.huluxia.com",
+            "Accept-Encoding": "gzip",
+        }
+
+        try:
+            if not self.session:
+                raise Exception("HTTP session 未初始化")
+
+            async with self.session.get(url, headers=headers) as response:
+                response_text = await response.text()
+                response_data = await self._safe_json_parse(response, response_text)
+
+                friendships = response_data.get("friendships", [])
+                logger.debug(
+                    f"[FOLLOWING_LIST] 获取关注列表成功: user_id={user_id}, "
+                    f"start={start}, count={len(friendships)}, "
+                    f"more={response_data.get('more')}"
+                )
+
+                return response_data
+
+        except aiohttp.ClientError as e:
+            logger.error(f"[FOLLOWING_LIST] 网络请求错误: {e}")
+            raise Exception(f"网络请求错误: {e}")
+        except Exception as e:
+            logger.error(f"[FOLLOWING_LIST] 获取关注列表异常: {e}")
+            raise
+
+    def _generate_follow_sign(self, user_id: str, current_time: str) -> str:
+        """
+        生成关注/取消关注请求的签名
+
+        签名算法：time + current_time + user_id + user_id + 密钥
+
+        Args:
+            user_id: 目标用户ID
+            current_time: 当前时间戳（毫秒）
+
+        Returns:
+            MD5签名字符串（小写）
+        """
+        SIGN_KEY = "fa1c28a5b62e79c3e63d9030b6142e4b"
+        sign_string = f"time{current_time}user_id{user_id}{SIGN_KEY}"
+        return hashlib.md5(sign_string.encode("utf-8")).hexdigest().lower()
+
+    async def unfollow_user(self, user_id: str) -> Dict[str, Any]:
+        """
+        取消关注指定用户
+
+        Args:
+            user_id: 要取消关注的用户ID
+
+        Returns:
+            API响应的字典
+
+        Raises:
+            Exception: 请求失败时抛出
+        """
+        current_time = str(int(time.time() * 1000))
+        sign = self._generate_follow_sign(user_id, current_time)
+
+        device_code_encoded = f"%5Bd%5D{self.device_code}"
+
+        url = (
+            f"{self.base_url}/friendship/unfollow/ANDROID/4.1.8"
+            f"?user_id={user_id}"
+            f"&time={current_time}"
+            f"&platform=2"
+            f"&gkey=000000"
+            f"&app_version=4.3.1.4"
+            f"&versioncode=393"
+            f"&market_id=tool_wandoujia"
+            f"&_key={self._key}"
+            f"&device_code={device_code_encoded}"
+            f"&phone_brand_type=MI"
+        )
+
+        headers = {
+            "User-Agent": "okhttp/3.8.1",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+
+        data = {"sign": sign}
+
+        try:
+            if not self.session:
+                raise Exception("HTTP session 未初始化")
+
+            async with self.session.post(url, data=data, headers=headers) as response:
+                response_text = await response.text()
+                response_data = await self._safe_json_parse(response, response_text)
+
+                status = response_data.get("status", 0)
+                if status == 1:
+                    logger.info(f"[UNFOLLOW] 取消关注成功: user_id={user_id}")
+                else:
+                    msg = response_data.get("msg", "未知错误")
+                    logger.warning(
+                        f"[UNFOLLOW] 取消关注失败: user_id={user_id}, msg={msg}"
+                    )
+
+                return response_data
+
+        except aiohttp.ClientError as e:
+            logger.error(f"[UNFOLLOW] 网络请求错误: {e}")
+            raise Exception(f"网络请求错误: {e}")
+        except Exception as e:
+            logger.error(f"[UNFOLLOW] 取消关注异常: {e}")
+            raise

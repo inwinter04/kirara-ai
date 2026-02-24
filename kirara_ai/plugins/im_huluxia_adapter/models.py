@@ -105,6 +105,50 @@ class HuluxiaHeatConfig(BaseModel):
         )
 
 
+# ===== 互关检查功能配置 =====
+class HuluxiaFollowCheckConfig(BaseModel):
+    """互关检查功能配置"""
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "title": "互关检查",
+            "description": "定时检查关注列表，取消未回关的用户关注",
+        },
+    )
+
+    enable: bool = Field(
+        title="启用互关检查",
+        description="是否启用互关检查功能",
+        default=False,
+        json_schema_extra={"widget": "switch"},
+    )
+    time: str = Field(
+        title="执行时间",
+        description="每天执行互关检查的时间，格式为 HH:MM，如 04:00",
+        default="04:00",
+        json_schema_extra={"placeholder": "04:00"},
+    )
+
+    @field_validator("time")
+    @classmethod
+    def validate_time(cls, v: str) -> str:
+        """验证时间格式"""
+        if not v:
+            raise ValueError("时间不能为空")
+        v = v.strip()
+        try:
+            hour, minute = map(int, v.split(":"))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError("时间格式错误，小时应在0-23之间，分钟应在0-59之间")
+            return f"{hour:02d}:{minute:02d}"
+        except Exception:
+            raise ValueError("时间格式错误，应为 HH:MM 格式，如 04:00")
+
+    def __repr__(self):
+        return f"<HuluxiaFollowCheckConfig enable={self.enable}, time={self.time}>"
+
+
 # ===== 泳池灌水功能配置 =====
 class HuluxiaPoolConfig(BaseModel):
     """泳池灌水功能配置"""
@@ -274,6 +318,21 @@ class HuluxiaConfig(BaseModel):
         le=120,
     )
 
+    # ===== 互关检查功能配置 =====
+    follow_check_enable: bool = Field(
+        title="启用互关检查",
+        description="是否启用互关检查功能（定时检查关注列表，取消未回关的用户关注）",
+        default=False,
+        json_schema_extra={"widget": "switch"},
+    )
+
+    follow_check_time: str = Field(
+        title="互关检查执行时间",
+        description="每天执行互关检查的时间（格式：HH:MM，如：04:00）",
+        default="04:00",
+        json_schema_extra={"placeholder": "04:00"},
+    )
+
     def __init__(self, **data):
         device_code_from_data = data.pop("device_code", None)
         super().__init__(**data)
@@ -283,6 +342,7 @@ class HuluxiaConfig(BaseModel):
             object.__setattr__(self, "_device_code", str(uuid.uuid4()))
         object.__setattr__(self, "_cached_heat_config", None)
         object.__setattr__(self, "_cached_pool_config", None)
+        object.__setattr__(self, "_cached_follow_check_config", None)
 
     @property
     def device_code(self) -> str:
@@ -351,6 +411,19 @@ class HuluxiaConfig(BaseModel):
             interval_minutes=self.pool_interval_minutes,
         )
         object.__setattr__(self, "_cached_pool_config", config)
+        return config
+
+    @property
+    def follow_check(self) -> HuluxiaFollowCheckConfig:
+        """从扁平化字段构造HuluxiaFollowCheckConfig对象（带缓存）"""
+        if self._cached_follow_check_config is not None:
+            return self._cached_follow_check_config
+
+        config = HuluxiaFollowCheckConfig(
+            enable=self.follow_check_enable,
+            time=self.follow_check_time,
+        )
+        object.__setattr__(self, "_cached_follow_check_config", config)
         return config
 
     def model_dump(self, **kwargs):
