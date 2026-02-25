@@ -236,9 +236,6 @@ class PoolTaskExecutor:
                 for post_data in posts:
                     post = self._parse_post(post_data)
                     if post.create_time <= last_create_time:
-                        logger.debug(
-                            f"[POOL_EXECUTOR] 帖子已处理过，早停: post_id={post.post_id}, create_time={post.create_time}"
-                        )
                         skipped_posts.append(post)
                     else:
                         new_posts.append(post)

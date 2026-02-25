@@ -675,12 +675,6 @@ class HuluxiaApiClient:
                 response_text = await response.text()
                 response_data = await self._safe_json_parse(response, response_text)
 
-                logger.debug(
-                    f"[POOL_POST_LIST] 获取帖子列表成功: start={start_param}, "
-                    f"count={len(response_data.get('posts', []))}, "
-                    f"more={response_data.get('more')}"
-                )
-
                 return response_data
 
         except aiohttp.ClientError as e:
