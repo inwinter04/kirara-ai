@@ -256,6 +256,13 @@ class HuluxiaConfig(BaseModel):
         json_schema_extra={"widget": "textarea"},
     )
 
+    user_blacklist: List[str] = Field(
+        title="用户黑名单",
+        description="要忽略的用户ID列表，这些用户的消息将不会被处理",
+        default=[],
+        json_schema_extra={"widget": "textarea"},
+    )
+
     # ===== 热度功能配置 =====
     heat_enable: bool = Field(
         title="启用热度功能",

@@ -72,6 +72,9 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
         # 互关检查任务调度器
         self._follow_check_scheduler: Optional[FollowCheckScheduler] = None
 
+        # 用户黑名单缓存（Set 提升 O(n) 到 O(1)）
+        self._blacklist_set: set = set(self.config.user_blacklist)
+
         logger.info(f"初始化葫芦侠适配器: {self.adapter_name}")
 
     @property
@@ -905,6 +908,17 @@ class HuluxiaAdapter(IMAdapter, UserProfileAdapter):
                         create_time = content.get("createTime")
                         text = content.get("text", "")
                         comment_id = content.get("commentID")
+
+                        # 检查用户黑名单
+                        user = content.get("user", {})
+                        user_id = str(user.get("userID", ""))
+                        if user_id and user_id in self._blacklist_set:
+                            logger.info(
+                                f"[POLLING] 用户 {user_id}({user.get('nick')}) 在黑名单中，跳过消息"
+                            )
+                            if create_time > max_processed_time:
+                                max_processed_time = create_time
+                            continue
 
                         logger.info(
                             f"[POLLING] 处理消息: create_time={create_time}, user={content.get('user', {}).get('nick')}, text={text[:30]}..."
